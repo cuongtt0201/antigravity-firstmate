@@ -17,4 +17,4 @@
 - Length must fit the use: a 10-minute presentation is a few pages, not dozens.
 
 ## Delegation
-- Delegate work to the general `worker` agent (Flash) and verification to `checker`. For real project work and Shipd quests (or when the user types /firstmate), load the `firstmate` skill and follow it: workers change code on their own branches, checker verifies, you merge.
+- Delegate work to the general `worker` agent (Flash) and verification to `checker`. For real project work (or when the user types /firstmate), load the `firstmate` skill and follow it: workers change code on their own branches, checker verifies, you merge.

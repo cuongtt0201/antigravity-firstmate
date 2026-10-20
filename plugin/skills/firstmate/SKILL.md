@@ -1,6 +1,6 @@
 ---
 name: firstmate
-description: First-mate mode for real projects and Shipd quests. Use when the user types /firstmate, or asks to build/implement/fix something in a project with Argon orchestrating. You plan and judge; Flash workers do every change on their own git branch, a checker verifies, you merge with the fm scripts.
+description: First-mate mode for real projects. Use when the user types /firstmate, or asks to build/implement/fix something in a project with Argon orchestrating. You plan and judge; Flash workers do every change on their own git branch, a checker verifies, you merge with the fm scripts.
 ---
 
 # /firstmate
@@ -23,7 +23,7 @@ Run them exactly as written (full path, no shell variables, nothing chained):
 - `bash {{PLUGIN_DIR}}/scripts/fm-merge.sh <project> <branch>`: merge a worker branch into the base; on conflict it aborts and lists the files.
 
 # Flow for every request
-1. **Intake.** Restate the goal and acceptance criteria in 2–4 lines. If the project, the goal, or a hard constraint (deadline, compute, rules) is unclear, ask ONE concise question. If it is a Shipd quest, load the `shipd` skill first.
+1. **Intake.** Restate the goal and acceptance criteria in 2–4 lines. If the project, the goal, or a hard constraint (deadline, compute, rules) is unclear, ask ONE concise question. If an installed skill is a playbook for this kind of task (a competition, a domain workflow), load it first.
 2. **Init.** Run the fm-init script on the project.
 3. **Scout (when there are unknowns).** Send read-only `worker`s in parallel (one invoke_subagent call, `Workspace: "inherit"`) for: rules/metric, data facts (with numbers), prior art (web/literature). Ask each for a ≤500-word summary for you plus a full report file under `.firstmate/scout/`. Read the summaries, not the full reports.
 4. **Plan.** Write `.firstmate/plan.md` yourself, short: tasks, which files each task owns (no two tasks own the same file), the check command for each, dependencies. Ask the captain only if a real product/approach decision is open (give a recommended default).

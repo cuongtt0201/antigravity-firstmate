@@ -1,6 +1,12 @@
 {
   "name": "flash-ultra",
-  "displayName": "Flash Guard",
+  "displayName": "Firstmate Crew",
   "version": "0.7.0",
-  "description": "First-mate crew for Gemini 4 Argon + Flash: a firstmate main agent that runs Flash workers in git worktrees, verifies with a checker and merges; a Shipd quest playbook; /best for multi-draft work; calm-tone/no-invented-facts rules; loop guard."
+  "description": "Argon plans and judges, Flash does the work: a firstmate main agent splits the job, Flash workers build in their own git worktrees, a Flash checker verifies against the original request, and only passing work is merged. Also /best for best-of-3 deliverables.",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "/firstmate Read TASK.md and complete it, with tests",
+    "/firstmate Add input validation to the API handlers and cover it with tests",
+    "/best Write a one-page project proposal from notes.md"
+  ]
 }
