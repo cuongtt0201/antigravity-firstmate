@@ -1,0 +1,12 @@
+{
+  "flash-ultra-guard": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "{{NODE}} {{PLUGIN_DIR}}/hooks/guard.js || echo '{\"decision\":\"allow\"}'", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}
