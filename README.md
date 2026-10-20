@@ -11,6 +11,49 @@ Argon is strong but uses up its quota quickly. Flash is cheap, but left alone it
 
 The idea comes from the "captain → first mate → crew" pattern: you talk only to the first mate, and the first mate reports outcomes with evidence.
 
+## How it works
+
+```mermaid
+flowchart TB
+  you(["You (captain)"])
+
+  subgraph app["Antigravity App"]
+    direction TB
+    fm["<b>First mate</b> · Gemini Argon<br/>plans, briefs, judges, merges<br/><i>never edits project files</i>"]
+    subgraph crew["Crew · Gemini Flash"]
+      direction LR
+      w1["Worker 1"]
+      w2["Worker 2"]
+      ck["Checker<br/><i>read-only</i>"]
+    end
+    caps[("Inherited skills,<br/>MCP, web search")]
+    guard{{"guard.js hook: pins crew to Flash,<br/>stops read loops, protects the plugin"}}
+  end
+
+  subgraph repo["Your project · git"]
+    direction LR
+    wt1["worktree + branch 1"]
+    wt2["worktree + branch 2"]
+    main[("main")]
+  end
+
+  you <-->|"request / report"| fm
+  fm -->|"check each branch"| ck
+  ck -->|"PASS / FAIL"| fm
+  fm -->|brief| w2
+  fm -->|brief| w1
+  caps -.-> crew
+  guard -.- crew
+  ck -.->|"tests + adversarial inputs"| wt2
+  ck -.-> wt1
+  w2 -->|commit| wt2
+  w1 -->|commit| wt1
+  wt1 ==>|"fm-merge.sh · PASS only"| main
+  wt2 ==> main
+```
+
+The step-by-step sequence, the git model and where the tokens go are in [docs/architecture.md](docs/architecture.md).
+
 ## Install
 
 Requires the Antigravity **App** (the IDE has no subagents) and Node.js 18+.
@@ -76,7 +119,7 @@ Behind `/firstmate`, the first mate runs these steps:
 
 These come from the author's machine on Antigravity App 2.24, over a handful of runs. Read them as indications, not benchmarks.
 
-- **Small coding task** (`slugify` plus tests) via `/firstmate`: done in about 12 minutes. The checker passed it with 18/18 adversarial inputs, and Argon accounted for about 20–24% of the tokens.
+- **Small coding task** (`slugify` plus tests) via `/firstmate`: done in about 12 minutes. The checker passed it with 18/18 adversarial inputs, and Argon accounted for about 20–24% of the tokens ([breakdown](docs/architecture.md#where-the-tokens-go)).
 - **Same project with worktrees** (`slugify_unique`, `slugify_many`): each worker built and committed in its own worktree and the result was merged into `main`, with 31/31 tests passing.
 - **`/best` on a coding task**: the final version passed 20/20 hidden tests.
 - **ML competition planning** (analysis only, no training): Argon orchestrated Flash scouts. Rubric score went from 20.5/25 to 22/25 once workers could search the web, and Argon used about 13–16% of the new input and output tokens.
