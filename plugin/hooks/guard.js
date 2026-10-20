@@ -40,11 +40,12 @@ function main() {
   const args = parseArgs(call.args !== undefined ? call.args : ev.tool_input);
   if (!tool) return allow();
 
-  // Running the plugin's own firstmate scripts is allowed (plain invocation, no chaining/redirection).
+  // Running the plugin's own firstmate scripts is allowed, also inside a chained command: the script
+  // calls are blanked out first, so any other mention of the plugin path in the command is still denied.
   const cmd = String(args.CommandLine || args.command || '');
-  const FM_SCRIPT_RE = /^\s*bash\s+\S*flash-ultra\/scripts\/fm-(init|status|merge)\.sh(\s+("[^"]*"|'[^']*'|[^\s;&|<>`$]+))*\s*$/;
-  const isFmScript = tool === 'run_command' && FM_SCRIPT_RE.test(cmd);
-  if (!isFmScript && (WRITE_TOOLS.has(tool) || tool === 'run_command') && PROTECTED_RE.test(JSON.stringify(args))) {
+  const FM_CALL_RE = /\bbash\s+\S*flash-ultra\/scripts\/fm-(init|status|merge)\.sh\b/g;
+  const subject = tool === 'run_command' ? `${cmd.replace(FM_CALL_RE, 'bash fm-script')} ${args.Cwd || ''}` : JSON.stringify(args);
+  if ((WRITE_TOOLS.has(tool) || tool === 'run_command') && PROTECTED_RE.test(subject)) {
     return out({ decision: 'deny', reason: '[guard] This is the user\'s guardrail (flash-ultra plugin / hook config). You may not modify or disable it. If you are blocked, tell the user.' });
   }
 

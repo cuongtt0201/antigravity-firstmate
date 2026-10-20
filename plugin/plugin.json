@@ -1,6 +1,6 @@
 {
   "name": "flash-ultra",
   "displayName": "Flash Guard",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "First-mate crew for Gemini 4 Argon + Flash: a firstmate main agent that runs Flash workers in git worktrees, verifies with a checker and merges; a Shipd quest playbook; /best for multi-draft work; calm-tone/no-invented-facts rules; loop guard."
 }

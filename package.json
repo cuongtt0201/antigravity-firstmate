@@ -1,6 +1,6 @@
 {
   "name": "antigravity-firstmate",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Firstmate crew for Google Antigravity: Gemini Argon orchestrates, Flash workers build in git worktrees, a Flash checker verifies, the first mate merges.",
   "bin": {
     "antigravity-firstmate": "install.js"
