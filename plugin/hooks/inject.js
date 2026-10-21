@@ -8,9 +8,8 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { PLUGIN_DIR, unwrap, loadState, saveState, agentOf } = require('./lib');
+const { PLUGIN_DIR, DIRECT_MAX, unwrap, loadState, saveState, agentOf, resetBudget, budgetUsed } = require('./lib');
 
-const DIRECT_MAX = 6; // keep in sync with guard.js
 const MAX_FACTS = 60;
 
 const ROLE_RULES = {
@@ -37,7 +36,9 @@ function mainCheckout(dir) {
 function factsMessage(workspaces) {
   const parts = [];
   for (const ws of workspaces) {
-    const repo = mainCheckout(String(ws).replace(/^file:\/\//, ''));
+    let dir = String(ws).replace(/^file:\/\//, '');
+    try { dir = decodeURIComponent(dir); } catch {}
+    const repo = mainCheckout(dir);
     if (!repo) continue;
     let lines = [];
     try { lines = fs.readFileSync(path.join(repo, '.firstmate', 'facts.md'), 'utf8').split('\n').filter((l) => l.startsWith('- ')); } catch {}
@@ -61,9 +62,9 @@ function main() {
     const agent = agentOf(id, st);
     if (agent === 'firstmate' && ev.initialNumSteps !== undefined && st.turnSteps !== ev.initialNumSteps) {
       st.turnSteps = ev.initialNumSteps; // a new captain message starts a new execution
-      st.direct = 0;
+      resetBudget(id, `new-message initialNumSteps=${ev.initialNumSteps} invocationNum=${ev.invocationNum}`);
     }
-    if (ROLE_RULES[agent]) steps.push({ ephemeralMessage: ROLE_RULES[agent](Math.max(0, DIRECT_MAX - (st.direct || 0))) });
+    if (ROLE_RULES[agent]) steps.push({ ephemeralMessage: ROLE_RULES[agent](Math.max(0, DIRECT_MAX - budgetUsed(id))) });
     if (id) saveState(id, st);
   }
   process.stdout.write(JSON.stringify(steps.length ? { injectSteps: steps } : {}));

@@ -12,16 +12,19 @@
 
 const fs = require('fs');
 const path = require('path');
-const { STATE_DIR, PLUGIN_DIR, unwrap, loadState, saveState, agentOf } = require('./lib');
+const { STATE_DIR, PLUGIN_DIR, DIRECT_MAX, unwrap, loadState, saveState, agentOf, spendBudget } = require('./lib');
 
 const MAX_SAME_READ = 3;
 const MAX_READ_STREAK = 40;
 const MAX_SUBAGENTS = 12; // per chat per day
-const DIRECT_MAX = 6; // first mate's own reads/commands per captain message; keep in sync with inject.js
 
 const READ_TOOLS = new Set(['read_file', 'view_file', 'view_file_outline', 'view_code_item', 'grep_search', 'find_by_name', 'list_dir', 'codebase_search']);
 const WRITE_TOOLS = new Set(['write_file', 'edit_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content', 'create_file']);
 const PROTECTED_RE = /\.gemini[\\/]+config[\\/]+(plugins[\\/]+flash-ultra|hooks\.json|config\.json)|flash-ultra[\\/]+(hooks|agents|plugin\.json)|guard\.js/;
+// Paths the first mate may read without spending budget: its facts file and its notes (not task workspaces).
+const FREE_PATH_RE = /[\\/]\.firstmate[\\/](facts\.md|notes[\\/])/;
+// Commands that change files: redirects into a file, in-place edits, moves, deletes, copies and git changes.
+const WRITE_CMD_RE = /(^|[^\w>&-])(\d?>>?|&>)\s*(?!\/dev\/null\b|&\d)[^\s|;&]|\b(sed|perl)\s+(-\w*\s+)*-i|\b(rm|mv|cp|tee|truncate|chmod|chown|ln|mkdir|touch|rsync)\s|\bgit\s+(\S+\s+)*?(checkout|reset|commit|add|stash|clean|restore|apply|merge|rebase|push|cherry-pick|rm|mv)\b|\b(npm|yarn|pnpm|pip|pip3)\s+(install|i|add|remove|uninstall)\b/;
 const FM_CALL_RE = /\bbash\s+\S*flash-ultra[\\/]scripts[\\/]fm\.sh\b/g;
 
 const out = (obj) => { process.stdout.write(JSON.stringify(obj)); process.exit(0); };
@@ -179,15 +182,25 @@ function main() {
 
   const target = pick(args, ['Path', 'AbsolutePath', 'TargetFile', 'filePath', 'path', 'DirectoryPath', 'SearchPath']);
 
-  // First-mate budget. Its own notes, facts and the plugin's playbooks are free; everything else counts.
-  if (decision.decision === 'allow' && (READ_TOOLS.has(tool) || tool === 'run_command') && agentOf(convoId, st) === 'firstmate') {
-    const subjectPath = tool === 'run_command' ? cmd : (target || JSON.stringify(args));
-    const free = /[\\/]\.firstmate[\\/]/.test(subjectPath) || subjectPath.includes(PLUGIN_DIR) || new RegExp(FM_CALL_RE.source).test(cmd);
-    if (!free) {
-      st.direct = (st.direct || 0) + 1;
-      if (st.direct > DIRECT_MAX) {
-        decision = { decision: 'deny', reason: `[firstmate budget] You already used your ${DIRECT_MAX} direct reads/commands for this captain message. Send the rest to explorer subagents (one invoke_subagent call, TypeName "explorer", each with one angle) and read their reports; or answer with what you have and list what is not verified.` };
-      }
+  const agent = decision.decision === 'allow' ? agentOf(convoId, st) : '';
+
+  // First-mate budget. Its facts, notes, the plugin's playbooks and fm.sh are free; every other read
+  // and every other command segment counts (so chaining a free command does not hide a read).
+  if (agent === 'firstmate' && (READ_TOOLS.has(tool) || tool === 'run_command')) {
+    const freePath = (s) => FREE_PATH_RE.test(s) || s.includes(PLUGIN_DIR);
+    const cost = tool === 'run_command'
+      ? cmd.split(/&&|\|\||;|\||\n/).map((x) => x.trim())
+        .filter((x) => x && !/^cd\s/.test(x) && !new RegExp(FM_CALL_RE.source).test(x) && !freePath(x)).length
+      : (freePath(target || JSON.stringify(args)) ? 0 : 1);
+    if (cost > 0 && spendBudget(convoId, cost) > DIRECT_MAX) {
+      decision = { decision: 'deny', reason: `[firstmate budget] You already used your ${DIRECT_MAX} direct reads/commands for this captain message. Send the rest to explorer subagents (one invoke_subagent call, TypeName "explorer", each with one angle) and read their reports; or answer with what you have and list what is not verified.` };
+    }
+  }
+
+  // Explorers are read-only: no write tools, and no command that changes files in the captain's checkout.
+  if (agent === 'explorer') {
+    if (WRITE_TOOLS.has(tool) || (tool === 'run_command' && WRITE_CMD_RE.test(cmd))) {
+      decision = { decision: 'deny', reason: '[guard] Explorers are read-only: no file edits, redirects into files, moves, deletes or git changes. Report what you would change under OPEN QUESTIONS instead.' };
     }
   }
   if (WRITE_TOOLS.has(tool)) {

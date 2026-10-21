@@ -1,4 +1,4 @@
-// Shared by guard.js and inject.js: per-chat state and the agent a chat runs.
+// Shared by guard.js and inject.js: per-chat state, the first mate's read budget, and the agent a chat runs.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -7,8 +7,11 @@ const STATE_DIR = process.env.FM_STATE_DIR || path.join(os.tmpdir(), 'flash-ultr
 const CONVO_DB = process.env.FM_CONVO_DB || path.join(os.homedir(), '.gemini', 'antigravity', 'conversation_summaries.db');
 const STATE_TTL_MS = 24 * 60 * 60 * 1000;
 const PLUGIN_DIR = path.resolve(__dirname, '..');
+const DIRECT_MAX = 6; // first mate's own reads/commands per captain message
+const BUDGET_IDLE_RESET_MS = 5 * 60 * 1000; // fallback reset when no new-message signal arrives
 
 const convoKey = (id) => String(id || 'unknown').replace(/[^A-Za-z0-9_-]/g, '_');
+const stateFile = (id, ext) => path.join(STATE_DIR, `${convoKey(id)}.${ext}`);
 
 // Hook payloads carry the common fields either at the top level or under one wrapper object.
 function unwrap(p) {
@@ -20,31 +23,59 @@ function unwrap(p) {
 
 function loadState(id) {
   try {
-    const s = JSON.parse(fs.readFileSync(path.join(STATE_DIR, `${convoKey(id)}.json`), 'utf8'));
+    const s = JSON.parse(fs.readFileSync(stateFile(id, 'json'), 'utf8'));
     if (Date.now() - (s.t || 0) < STATE_TTL_MS) return s;
   } catch {}
   return {};
 }
 
+// Write to a temp file and rename, so a concurrent reader never sees a half-written file.
 function saveState(id, st) {
   st.t = Date.now();
   fs.mkdirSync(STATE_DIR, { recursive: true });
-  fs.writeFileSync(path.join(STATE_DIR, `${convoKey(id)}.json`), JSON.stringify(st));
+  const file = stateFile(id, 'json');
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(st));
+  fs.renameSync(tmp, file);
 }
 
-// The agent a chat runs (firstmate, worker, explorer, checker, or '' when unknown), read from the
-// App's conversation index. Only a found name is cached, so a chat not yet indexed is retried.
-function agentOf(id, st) {
-  if (st.agent) return st.agent;
-  if (!id) return '';
+function budgetLog(id, what) {
+  try { fs.appendFileSync(path.join(STATE_DIR, 'budget.log'), `${new Date().toISOString()} ${convoKey(id)} ${what}\n`); } catch {}
+}
+
+// The budget is an append-only file (one line per direct read), so parallel guard processes never lose a count.
+function resetBudget(id, why) {
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+  fs.writeFileSync(stateFile(id, 'direct'), '');
+  budgetLog(id, `reset ${why}`);
+}
+function spendBudget(id, n) {
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+  const file = stateFile(id, 'direct');
   try {
-    const { DatabaseSync } = require('node:sqlite');
-    const db = new DatabaseSync(CONVO_DB, { readOnly: true });
-    const row = db.prepare('select agent_name from conversation_summaries where conversation_id = ?').get(String(id));
-    db.close();
-    if (row && row.agent_name) st.agent = row.agent_name;
+    if (Date.now() - fs.statSync(file).mtimeMs > BUDGET_IDLE_RESET_MS) resetBudget(id, 'idle');
   } catch {}
-  return st.agent || '';
+  fs.appendFileSync(file, '1\n'.repeat(n));
+  return budgetUsed(id);
+}
+function budgetUsed(id) {
+  try { return fs.readFileSync(stateFile(id, 'direct'), 'utf8').length / 2; } catch { return 0; }
 }
 
-module.exports = { STATE_DIR, PLUGIN_DIR, unwrap, loadState, saveState, agentOf };
+// The agent a chat runs (firstmate, worker, explorer, checker, or '' for the default agent or not yet
+// indexed), read from the App's conversation index. A row with an empty agent name is cached as 'none';
+// a missing row is retried on the next call.
+function agentOf(id, st) {
+  if (!st.agent && id) {
+    try {
+      const { DatabaseSync } = require('node:sqlite');
+      const db = new DatabaseSync(CONVO_DB, { readOnly: true });
+      const row = db.prepare('select agent_name from conversation_summaries where conversation_id = ?').get(String(id));
+      db.close();
+      if (row) st.agent = row.agent_name || 'none';
+    } catch {}
+  }
+  return st.agent && st.agent !== 'none' ? st.agent : '';
+}
+
+module.exports = { STATE_DIR, PLUGIN_DIR, DIRECT_MAX, unwrap, loadState, saveState, agentOf, resetBudget, spendBudget, budgetUsed, budgetLog };

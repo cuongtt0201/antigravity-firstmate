@@ -94,7 +94,7 @@ The model works in its own space inside your repo and never touches your branche
 
 ## Safety
 
-The first mate's own budget: at most 6 direct file reads or commands per message of yours (its notes, facts and the workspace script are free). After that it must send explorers.
+The first mate's own budget: at most 6 direct file reads or command segments per message of yours (its facts, notes, the playbooks and the workspace script are free). After that it must send explorers. Explorers are read-only by rule and by the guard: no file edits, redirects into files, moves, deletes, git changes or package installs. Budget resets are logged to `$TMPDIR/flash-ultra-loop-guard/budget.log`.
 
 
 The guard hook runs on every tool call while the plugin is enabled:
