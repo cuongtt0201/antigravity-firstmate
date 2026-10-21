@@ -86,7 +86,7 @@ function install() {
 
   const version = JSON.parse(fs.readFileSync(path.join(SOURCE, 'plugin.json'), 'utf8')).version;
   log(`installed ${NAME} v${version} -> ${TARGET}`);
-  log('next: restart the Antigravity App, then see README "After installing".');
+  log('next: restart the Antigravity App, then see the Setup section of the README.');
 }
 
 function uninstall() {
