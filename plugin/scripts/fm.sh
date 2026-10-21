@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # firstmate workspace: the model's own task worktrees, kept out of the captain's branches.
 #   fm.sh init    <repo>                     exclude .firstmate/ locally, create facts.md, show state
+#   fm.sh fact    <repo> "<fact>"            add one dated line to .firstmate/facts.md (skips duplicates)
 #   fm.sh start   <repo> <task>              detached worktree at <repo>/.firstmate/wt/<task>
 #   fm.sh save    <repo> <task> "<message>"  commit the task's changes inside the task
 #   fm.sh gate    <repo> <task> [command]    run checks (auto-detected, or the given command)
@@ -16,7 +17,7 @@ ID=(-c user.name=firstmate -c user.email=firstmate@local)
 PROTECTED_RE='^(main|master|prod|production|prod-.*|release/.*)$'
 
 die() { echo "[fm] ERROR: $*" >&2; exit 2; }
-[ $# -ge 2 ] || die "usage: fm.sh <init|start|save|gate|deliver|status|clean> <repo> [args]"
+[ $# -ge 2 ] || die "usage: fm.sh <init|fact|start|save|gate|deliver|status|clean> <repo> [args]"
 CMD=$1; REPO_ARG=$2; shift 2
 
 # main checkout of the repo containing $1 (works when given a task workspace path too)
@@ -61,6 +62,15 @@ FACTS
   [[ $BR =~ $PROTECTED_RE ]] && echo "[fm] note: you are on '$BR'. Delivered changes stay uncommitted; commit them on the branch you choose."
   echo "[fm] uncommitted files in your checkout: $(git status --porcelain | wc -l | tr -d ' ')"
   echo "[fm] facts: $R/.firstmate/facts.md ($(grep -c '^- ' .firstmate/facts.md || true) facts)"
+  ;;
+
+fact)
+  need_repo; F="$R/.firstmate/facts.md"
+  [ -f "$F" ] || die "run: fm.sh init $R"
+  ONE=$(printf '%s' "${1:-}" | tr '\n' ' ' | sed 's/  */ /g; s/^ //; s/ $//')
+  [ -n "$ONE" ] || die "usage: fm.sh fact <repo> \"<fact>\""
+  if grep -qiF -- "- $ONE (" "$F"; then echo "[fm] already known: $ONE"
+  else echo "- $ONE ($(date +%F))" >> "$F"; echo "[fm] fact recorded ($(grep -c '^- ' "$F") facts in $F)"; fi
   ;;
 
 start)

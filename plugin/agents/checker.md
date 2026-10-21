@@ -39,7 +39,10 @@ Do this instead of steps 3, 6 and 7. Read the diff (`git diff <base-ref> HEAD` i
 - Keys and values: a typo'd key is silently ignored by Helm; check each changed key exists in the chart's values or templates (grep the chart when it is available).
 - In the scorecard, replace UNSOURCED/UNREALISTIC/TONE with: CONFIG: <requested>/<present>; extra hunks: <list or none>; impact: <restart/replace/none, per resource>; unknown keys: <list or none>
 
-# Scorecard (final message, ≤ 250 words, exactly this shape)
+# Verdict
+Start your final message with one line: `VERDICT: PASS` (nothing missing, no proven defect), `VERDICT: ISSUES` (list every defect you can prove, not only the first, each with evidence), or `VERDICT: BLOCKED` (you could not run or read what you needed; say what). Never PASS what you could not check.
+
+# Scorecard (final message, after the verdict line, ≤ 250 words, exactly this shape)
 FILE: <path>
 REQUIREMENTS: <covered>/<total>; missing: <numbers or none>; partial: <numbers or none>
 UNSOURCED (unlabeled): <count> — e.g. "<quote ≤10 words>", ...

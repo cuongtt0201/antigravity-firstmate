@@ -10,10 +10,10 @@ flowchart TB
 
   subgraph app["Antigravity App"]
     direction TB
-    fm["<b>First mate</b> · Gemini Argon<br/>picks the lane, plans, judges<br/><i>never edits your checkout</i>"]
+    fm["<b>First mate</b> · Gemini Argon<br/>picks the playbook, briefs, judges<br/><i>never edits your checkout</i>"]
     subgraph crew["Crew · Gemini Flash"]
       direction LR
-      inv["Investigators<br/><i>read-only commands</i>"]
+      inv["Explorers<br/><i>read-only, file:line evidence</i>"]
       wk["Workers<br/><i>edit one task workspace</i>"]
       ck["Checker<br/><i>read-only</i>"]
     end
@@ -31,7 +31,7 @@ flowchart TB
   remote[("Git remote · GitOps")]
 
   you <-->|"message / report"| fm
-  fm -->|"investigate brief"| inv
+  fm -->|"how / investigate brief"| inv
   fm -->|"change brief"| wk
   fm -->|"check task"| ck
   inv -.->|"get, describe, logs, top"| live
@@ -44,21 +44,28 @@ flowchart TB
 
 | Part | Model | Writes | Job |
 |---|---|---|---|
-| First mate (`agents/firstmate.md`) | Gemini Argon | `.firstmate/facts.md`, notes | Pick the lane, plan, brief workers, judge evidence and scorecards, deliver |
-| Worker (`agents/worker.md`) | Gemini Flash | Only its task workspace, or nothing when investigating | Run commands, read code, make one change |
+| First mate (`agents/firstmate.md`) | Gemini Argon | `.firstmate/facts.md`, notes | Pick the playbook, brief explorers and workers, judge their evidence, deliver |
+| Explorer (`agents/explorer.md`) | Gemini Flash | Nothing | Read code, config and command output for one angle; report findings with `file:line` evidence and measured/inferred/guess labels |
+| Worker (`agents/worker.md`) | Gemini Flash | Only its task workspace | Make one change; report the check it ran and the evidence |
 | Checker (`agents/checker.md`) | Gemini Flash | Nothing | Compare a change with the original request; for code, run tests and adversarial inputs; for config, list impact and unknown keys |
 | `scripts/fm.sh` | n/a | Task worktrees and `refs/firstmate/*` | The model's own workspace: init, start, save, gate, deliver, status, clean |
-| `hooks/guard.js` | n/a | n/a | PreToolUse hook on every tool call (see Safety) |
+| `hooks/guard.js` | n/a | n/a | PreToolUse hook on every tool call (see Safety), including the first mate's direct-read budget |
+| `hooks/inject.js` | n/a | n/a | SessionStart: injects `.firstmate/facts.md`. PreInvocation: injects each role's short rules before every model turn |
 
-## The three lanes
+## Playbooks
 
-The first mate reads each message and starts its reply with the lane it picked. `/investigate` and `/change` force one.
+The first mate routes each message to a playbook (in `skills/firstmate/playbooks/`), names it on the first line, and copies its steps as a checklist, marking each done or `skip: <reason>`. `/how`, `/investigate` and `/change` force one. This follows the router-and-playbook pattern of Lauren Tan's pstack.
 
-| Lane | Typical request | What happens |
+| Playbook | Typical request | What happens |
 |---|---|---|
-| **ask** | "lệnh nào để kéo file từ bucket", "luồng chatbot này chạy sao" | Answered directly, with a short why. At most one read-only worker when reading is needed. |
-| **investigate** | "pod prod-core-insurance bị gì", "sao pipeline không trigger" | Hypotheses → read-only workers in parallel → evidence → cause, confidence and fix commands for you. Remote hosts and prod shells: you run the commands and paste the output. |
-| **change** | "tăng retention tempo", "thêm alert rule", "sửa .gitlab-ci.yml" | Plan → wait for your go → worker edits a task workspace → `fm.sh gate` → checker for bigger changes → delivered to your working tree, uncommitted. |
+| **quick** | "dig crm-beta.globalcare.vn", "lệnh nào để kéo file từ bucket" | One command or up to three small reads by the first mate; a short answer with the why. |
+| **how** | "source này upload lên bucket ở đâu", "chuyển sang provider khác cần sửa gì" | Goal in one line → facts → 1 to 4 explorers in parallel, each with one angle → reports checked for evidence → overview, how it works with `file:line`, smallest change, gotchas, unknowns. |
+| **investigate** | "pod prod-core-insurance bị gì", "sao pipeline không trigger" | Symptom → hypotheses → one explorer per hypothesis (CONFIRMED / KILLED / OPEN) → cause, evidence, fix commands for you. Remote hosts and prod shells: you run the commands and paste the output. |
+| **change** | "tăng retention tempo", "thêm alert rule", "sửa .gitlab-ci.yml" | Plan (smallest change, risk) → your go → worker edits a task workspace → `fm.sh gate` → checker → delivered to your working tree, uncommitted. |
+
+Each role answers in a fixed format (EXPLORER REPORT, WORKER REPORT, checker VERDICT). The first mate rejects a report that lacks the evidence its format asks for, respawns once, and then lists the gap; a gap is never presented as a result.
+
+Gemini follows written rules more loosely than the models pstack was built on, so two hooks back the playbooks with code: `inject.js` repeats each role's rules before every model turn, and `guard.js` gives the first mate 6 direct reads or commands per captain message. The first mate also has no search or listing tools.
 
 ```mermaid
 sequenceDiagram

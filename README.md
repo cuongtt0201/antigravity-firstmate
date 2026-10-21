@@ -4,9 +4,10 @@ A plugin for the **Google Antigravity App** that lets **Gemini Argon** run a cre
 
 Argon is strong but uses up its quota quickly. Flash is cheap, but left alone it guesses at project context, ships small fixes, and makes confident claims it can't back up. The plugin puts each model where it is good, and puts code where neither should be trusted:
 
-- **First mate (Argon)** reads your message, picks a lane, plans and judges. It never edits your checkout.
-- **Flash workers** run the read-only commands of an investigation, or make a change in the model's own task workspace.
-- **Code checks the change** (`helm template`, lint, `terraform fmt`, your tests) before anything reaches you, and a Flash **checker** reviews bigger changes against your original request.
+- **First mate (Argon)** routes your message to a playbook, briefs the crew and judges their evidence. It cannot search the repo itself and has a small budget of direct reads, so bulk reading goes to the crew. It never edits your checkout.
+- **Flash crew, one role each, each with its own rules and report format:** explorers read code, config and command output and cite `file:line`; workers make a change in the model's own task workspace; a checker verifies it against your original request.
+- **Code checks the change** (`helm template`, lint, `terraform fmt`, your tests) before anything reaches you.
+- **Claims are labelled** measured, inferred or guess, nothing is invented, and every recommendation ends with the gotchas you did not ask about.
 - **You stay in charge of git and the live systems.** Changes arrive in your working tree as uncommitted edits; you commit, push and apply. A guard hook blocks agents from applying, deleting, scaling or pushing.
 
 ## How it works
@@ -17,10 +18,10 @@ flowchart TB
 
   subgraph app["Antigravity App"]
     direction TB
-    fm["<b>First mate</b> · Gemini Argon<br/>picks the lane, plans, judges<br/><i>never edits your checkout</i>"]
+    fm["<b>First mate</b> · Gemini Argon<br/>picks the playbook, briefs, judges<br/><i>never edits your checkout</i>"]
     subgraph crew["Crew · Gemini Flash"]
       direction LR
-      inv["Investigators<br/><i>read-only commands</i>"]
+      inv["Explorers<br/><i>read-only, file:line evidence</i>"]
       wk["Workers<br/><i>edit one task workspace</i>"]
       ck["Checker<br/><i>read-only</i>"]
     end
@@ -38,7 +39,7 @@ flowchart TB
   remote[("Git remote · GitOps")]
 
   you <-->|"message / report"| fm
-  fm -->|"investigate brief"| inv
+  fm -->|"how / investigate brief"| inv
   fm -->|"change brief"| wk
   fm -->|"check task"| ck
   inv -.->|"get, describe, logs, top"| live
@@ -49,11 +50,12 @@ flowchart TB
   guard -.- crew
 ```
 
-Every message lands in one of three lanes. The first mate names the lane on the first line of its reply; `/investigate` and `/change` force one.
+Every message goes to a playbook. The first mate names it on the first line of its reply and copies its steps as a checklist; `/how`, `/investigate` and `/change` force one.
 
-| Lane | For | What you get |
+| Playbook | For | What you get |
 |---|---|---|
-| **ask** | "lệnh nào để…", "luồng này chạy sao" | A short answer with the why |
+| **quick** | "dig domain này", "lệnh nào để…" | A short answer with the why, no subagents |
+| **how** | "source này upload lên bucket ở đâu", "đổi sang provider khác thì sửa gì" | 1 to 4 explorers read in parallel; overview, `file:line`, smallest change, gotchas, unknowns |
 | **investigate** | a pod restarting, an alert, a pipeline that won't trigger, a failing API call | Cause and confidence, the evidence lines, and the fix as commands for you to run |
 | **change** | Helm values, alert rules, `.gitlab-ci.yml`, Terraform, scripts, code | A plan, then (after your go) a checked change in your working tree, uncommitted |
 
@@ -92,6 +94,9 @@ The model works in its own space inside your repo and never touches your branche
 
 ## Safety
 
+The first mate's own budget: at most 6 direct file reads or commands per message of yours (its notes, facts and the workspace script are free). After that it must send explorers.
+
+
 The guard hook runs on every tool call while the plugin is enabled:
 
 - **Allowed:** reading (`kubectl get/describe/logs/top`, `git log/diff`, `helm template`, `terraform plan`, `gcloud … list`), downloads from buckets.
@@ -105,14 +110,17 @@ It reads command text, so it is a safety net, not a sandbox.
 
 | Path | Purpose |
 |---|---|
-| `agents/firstmate.md` | Main agent (Argon): lanes, hard rules, investigate and change flows |
-| `agents/worker.md` | Flash worker; inherits installed skills, plugins and MCP servers; has web search |
-| `agents/checker.md` | Flash checker, read-only; code mode (tests, adversarial inputs) and config mode (impact, unknown keys) |
-| `skills/firstmate`, `skills/investigate`, `skills/change` | `/firstmate`, and the two commands that force a lane |
+| `agents/firstmate.md` | Main agent (Argon): routing, hard rules, workspace script; no search tools |
+| `agents/explorer.md` | Flash explorer, read-only; EXPLORER REPORT with `file:line` evidence and measured/inferred/guess labels |
+| `agents/worker.md` | Flash worker; WORKER REPORT with the check it ran and evidence |
+| `agents/checker.md` | Flash checker, read-only; VERDICT PASS / ISSUES / BLOCKED; code mode and config mode |
+| `skills/firstmate/playbooks/` | quick, how, investigate, change: the steps the first mate copies as its checklist |
+| `skills/firstmate`, `skills/how`, `skills/investigate`, `skills/change` | `/firstmate`, and the commands that force a playbook |
 | `skills/best` | `/best`: three independent drafts, scored, rewritten from the winner |
 | `rules/AGENTS.md` | Always on: calm tone, no invented facts, never change live systems |
-| `hooks/guard.js` | The guard described above |
-| `scripts/fm.sh` | The model's workspace: `init`, `start`, `save`, `gate`, `deliver`, `status`, `clean` |
+| `hooks/guard.js` | The guard described above, including the first mate's read budget |
+| `hooks/inject.js` | Injects `.firstmate/facts.md` when a chat starts, and each role's short rules before every model turn |
+| `scripts/fm.sh` | The model's workspace: `init`, `fact`, `start`, `save`, `gate`, `deliver`, `status`, `clean` |
 | `scripts/fm-checks.sh`, `scripts/fm-helmfile.rb` | Automatic checks picked from the changed files, including `helm template` for helmfile releases with local charts |
 
 ## Early results

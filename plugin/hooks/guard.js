@@ -5,18 +5,19 @@
 //     denied (the captain runs them); remote shells and production pod shells need the captain's approval.
 //  3. Pin worker/checker subagents to Flash, and cap subagent launches per chat.
 //  4. Loop guard: deny the 4th identical read of an unchanged file; nudge after 40 reads in a row.
+//  5. First-mate budget: in chats run by the firstmate agent, at most DIRECT_MAX direct reads/commands per
+//     captain message (inject.js resets the count on each new message); the rest goes to explorer subagents.
 // It is a safety net, not a sandbox: it reads the command text and can be fooled by obfuscation.
 // Fails open: any error → allow.
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
+const { STATE_DIR, PLUGIN_DIR, unwrap, loadState, saveState, agentOf } = require('./lib');
 
 const MAX_SAME_READ = 3;
 const MAX_READ_STREAK = 40;
 const MAX_SUBAGENTS = 12; // per chat per day
-const STATE_DIR = path.join(os.tmpdir(), 'flash-ultra-loop-guard');
-const STATE_TTL_MS = 24 * 60 * 60 * 1000;
+const DIRECT_MAX = 6; // first mate's own reads/commands per captain message; keep in sync with inject.js
 
 const READ_TOOLS = new Set(['read_file', 'view_file', 'view_file_outline', 'view_code_item', 'grep_search', 'find_by_name', 'list_dir', 'codebase_search']);
 const WRITE_TOOLS = new Set(['write_file', 'edit_file', 'write_to_file', 'replace_file_content', 'multi_replace_file_content', 'create_file']);
@@ -125,7 +126,7 @@ function main() {
   const raw = fs.readFileSync(0, 'utf8');
   if (!raw.trim()) return allow();
   const p = JSON.parse(raw);
-  const ev = p.preToolHookArgs || p.toolHookArgs || p;
+  const ev = unwrap(p);
   const call = ev.toolCall || {};
   const tool = call.name || ev.tool_name || '';
   const args = parseArgs(call.args !== undefined ? call.args : ev.tool_input);
@@ -143,14 +144,9 @@ function main() {
     if (d) return out(d);
   }
 
-  const convo = String(ev.conversationId || p.conversationId || 'unknown').replace(/[^A-Za-z0-9_-]/g, '_');
-  fs.mkdirSync(STATE_DIR, { recursive: true });
-  const file = path.join(STATE_DIR, `${convo}.json`);
-  let st = { reads: {}, streak: 0, subagents: 0 };
-  try {
-    const s = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (Date.now() - (s.t || 0) < STATE_TTL_MS) st = { reads: s.reads || {}, streak: s.streak || 0, subagents: s.subagents || 0, model: s.model };
-  } catch {}
+  const convoId = ev.conversationId || p.conversationId || '';
+  const convo = String(convoId || 'unknown').replace(/[^A-Za-z0-9_-]/g, '_');
+  const st = { reads: {}, streak: 0, subagents: 0, ...loadState(convoId) };
 
   // Record which model each conversation runs on (first sighting), to verify model routing.
   const model = ev.modelName || p.modelName;
@@ -163,7 +159,7 @@ function main() {
   // Pin worker subagents to Flash. The app's system prompt tends to pass "Model":"inherit",
   // which overrides the agent file's `model: flash` (antigravity-cli #1195) and would run the
   // workers on the expensive orchestrator model. `overwrite` is shallow-merged into the args.
-  const FLASH_AGENTS = /^(worker|checker)$/;
+  const FLASH_AGENTS = /^(worker|checker|explorer)$/;
   let overwrite = null;
   if (tool === 'invoke_subagent') {
     const n = Array.isArray(args.Subagents) ? args.Subagents.length : 1;
@@ -181,7 +177,19 @@ function main() {
     }
   }
 
-  const target = pick(args, ['Path', 'AbsolutePath', 'TargetFile', 'filePath', 'path']);
+  const target = pick(args, ['Path', 'AbsolutePath', 'TargetFile', 'filePath', 'path', 'DirectoryPath', 'SearchPath']);
+
+  // First-mate budget. Its own notes, facts and the plugin's playbooks are free; everything else counts.
+  if (decision.decision === 'allow' && (READ_TOOLS.has(tool) || tool === 'run_command') && agentOf(convoId, st) === 'firstmate') {
+    const subjectPath = tool === 'run_command' ? cmd : (target || JSON.stringify(args));
+    const free = /[\\/]\.firstmate[\\/]/.test(subjectPath) || subjectPath.includes(PLUGIN_DIR) || new RegExp(FM_CALL_RE.source).test(cmd);
+    if (!free) {
+      st.direct = (st.direct || 0) + 1;
+      if (st.direct > DIRECT_MAX) {
+        decision = { decision: 'deny', reason: `[firstmate budget] You already used your ${DIRECT_MAX} direct reads/commands for this captain message. Send the rest to explorer subagents (one invoke_subagent call, TypeName "explorer", each with one angle) and read their reports; or answer with what you have and list what is not verified.` };
+      }
+    }
+  }
   if (WRITE_TOOLS.has(tool)) {
     // A write changes the file, so re-reading it is legitimate again.
     for (const k of Object.keys(st.reads)) if (!target || k.startsWith(target + '#')) delete st.reads[k];
@@ -203,8 +211,7 @@ function main() {
       st.streak = 0;
     }
   }
-  st.t = Date.now();
-  fs.writeFileSync(file, JSON.stringify(st));
+  saveState(convoId || 'unknown', st);
   if (overwrite && decision.decision === 'allow') decision.overwrite = overwrite;
   out(decision);
 }

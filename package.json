@@ -1,6 +1,6 @@
 {
   "name": "antigravity-firstmate",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "Firstmate Crew plugin for the Google Antigravity App: Gemini Argon orchestrates, Flash workers build in git worktrees, a Flash checker verifies, the first mate merges.",
   "bin": {
     "antigravity-firstmate": "install.js"

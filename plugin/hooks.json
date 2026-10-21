@@ -8,5 +8,13 @@
         ]
       }
     ]
+  },
+  "flash-ultra-context": {
+    "SessionStart": [
+      { "type": "command", "command": "{{NODE}} {{PLUGIN_DIR}}/hooks/inject.js session || echo '{}'", "timeout": 5 }
+    ],
+    "PreInvocation": [
+      { "type": "command", "command": "{{NODE}} {{PLUGIN_DIR}}/hooks/inject.js invoke || echo '{}'", "timeout": 5 }
+    ]
   }
 }
