@@ -182,7 +182,7 @@ function main() {
 
   const target = pick(args, ['Path', 'AbsolutePath', 'TargetFile', 'filePath', 'path', 'DirectoryPath', 'SearchPath']);
 
-  const agent = decision.decision === 'allow' ? agentOf(convoId, st) : '';
+  const agent = decision.decision === 'allow' ? agentOf(convoId, st, ev.modelName || p.modelName) : '';
 
   // First-mate budget. Its facts, notes, the plugin's playbooks and fm.sh are free; every other read
   // and every other command segment counts (so chaining a free command does not hide a read).

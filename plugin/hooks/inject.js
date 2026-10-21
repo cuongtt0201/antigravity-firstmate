@@ -8,7 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { PLUGIN_DIR, DIRECT_MAX, unwrap, loadState, saveState, agentOf, resetBudget, budgetUsed } = require('./lib');
+const { PLUGIN_DIR, DIRECT_MAX, unwrap, loadState, saveState, agentOf, lastUserStep, resetBudget, budgetUsed } = require('./lib');
 
 const MAX_FACTS = 60;
 
@@ -16,7 +16,7 @@ const ROLE_RULES = {
   firstmate: (left) => [
     '[firstmate rules]',
     '1. First line of your reply: the playbook (→ quick / → how / → investigate / → change). Open ' + path.join(PLUGIN_DIR, 'skills/firstmate/playbooks') + '/<name>.md, copy its steps as a checklist, mark each done or skip: <reason>.',
-    `2. You have ${left} of ${DIRECT_MAX} direct reads/commands left for this captain message. Bulk reading goes to explorer subagents (one invoke_subagent call, TypeName "explorer"); read their reports, not the files.`,
+    `2. You have ${left} of ${DIRECT_MAX} direct reads/commands left for this captain message. Small questions: read yourself, including the catch blocks and auth of what you read. Larger ones: explorer subagents (one invoke_subagent call, TypeName "explorer"), always with an error-paths-and-security angle when the goal is a change or migration.`,
     '3. Label claims measured / inferred / guess. Never invent endpoints, hosts, versions or names. Reject subagent reports without evidence; a gap is not a result.',
     '4. Smallest change first. End recommendations with Gotchas the captain did not ask about. Record durable facts with fm.sh fact.',
   ].join('\n'),
@@ -59,10 +59,20 @@ function main() {
     if (msg) steps.push({ systemMessage: { systemMessage: msg } });
   } else if (mode === 'invoke') {
     const st = loadState(id);
-    const agent = agentOf(id, st);
-    if (agent === 'firstmate' && ev.initialNumSteps !== undefined && st.turnSteps !== ev.initialNumSteps) {
-      st.turnSteps = ev.initialNumSteps; // a new captain message starts a new execution
-      resetBudget(id, `new-message initialNumSteps=${ev.initialNumSteps} invocationNum=${ev.invocationNum}`);
+    const agent = agentOf(id, st, ev.modelName);
+    if (agent === 'firstmate') {
+      // The budget is per captain message: reset when the transcript shows a new USER_INPUT step.
+      // Without a readable transcript, fall back to a new execution (invocationNum back to 0; a missing
+      // value is protojson's omitted zero). initialNumSteps changes on every call and marks nothing.
+      const u = lastUserStep(id, ev);
+      if (u !== undefined) {
+        if (st.lastUserStep !== u) resetBudget(id, `captain-message step=${u}`);
+        st.lastUserStep = u;
+      } else {
+        const n = ev.invocationNum === undefined ? 0 : Number(ev.invocationNum);
+        if (n === 0 || (st.lastInvocation !== undefined && n < st.lastInvocation)) resetBudget(id, `new-execution invocationNum=${n}`);
+        st.lastInvocation = n;
+      }
     }
     if (ROLE_RULES[agent]) steps.push({ ephemeralMessage: ROLE_RULES[agent](Math.max(0, DIRECT_MAX - budgetUsed(id))) });
     if (id) saveState(id, st);

@@ -4,7 +4,7 @@ A plugin for the **Google Antigravity App** that lets **Gemini Argon** run a cre
 
 Argon is strong but uses up its quota quickly. Flash is cheap, but left alone it guesses at project context, ships small fixes, and makes confident claims it can't back up. The plugin puts each model where it is good, and puts code where neither should be trusted:
 
-- **First mate (Argon)** routes your message to a playbook, briefs the crew and judges their evidence. It cannot search the repo itself and has a small budget of direct reads, so bulk reading goes to the crew. It never edits your checkout.
+- **First mate (Argon)** routes your message to a playbook, briefs the crew and judges their evidence. It answers small questions from its own reads, within a budget of 6 per message; bulk reading goes to the crew. It never edits your checkout.
 - **Flash crew, one role each, each with its own rules and report format:** explorers read code, config and command output and cite `file:line`; workers make a change in the model's own task workspace; a checker verifies it against your original request.
 - **Code checks the change** (`helm template`, lint, `terraform fmt`, your tests) before anything reaches you.
 - **Claims are labelled** measured, inferred or guess, nothing is invented, and every recommendation ends with the gotchas you did not ask about.
@@ -110,7 +110,7 @@ It reads command text, so it is a safety net, not a sandbox.
 
 | Path | Purpose |
 |---|---|
-| `agents/firstmate.md` | Main agent (Argon): routing, hard rules, workspace script; no search tools |
+| `agents/firstmate.md` | Main agent (Argon): routing, hard rules, workspace script |
 | `agents/explorer.md` | Flash explorer, read-only; EXPLORER REPORT with `file:line` evidence and measured/inferred/guess labels |
 | `agents/worker.md` | Flash worker; WORKER REPORT with the check it ran and evidence |
 | `agents/checker.md` | Flash checker, read-only; VERDICT PASS / ISSUES / BLOCKED; code mode and config mode |
@@ -140,7 +140,7 @@ From the author's machine on Antigravity App 2.24, over a handful of runs with t
 
 ## Contributing
 
-Edit files under `plugin/`, reinstall with `node install.js`, and try the change in the App. Issues and PRs are welcome.
+Edit files under `plugin/`, run `bash tests/run.sh` (guard policy, the first mate's budget, context hooks and the fm.sh workspace; needs git, node and ruby), reinstall with `node install.js`, and try the change in the App. Issues and PRs are welcome.
 
 ## License
 

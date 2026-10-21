@@ -59,13 +59,13 @@ The first mate routes each message to a playbook (in `skills/firstmate/playbooks
 | Playbook | Typical request | What happens |
 |---|---|---|
 | **quick** | "dig crm-beta.globalcare.vn", "lệnh nào để kéo file từ bucket" | One command or up to three small reads by the first mate; a short answer with the why. |
-| **how** | "source này upload lên bucket ở đâu", "chuyển sang provider khác cần sửa gì" | Goal in one line → facts → 1 to 4 explorers in parallel, each with one angle → reports checked for evidence → overview, how it works with `file:line`, smallest change, gotchas, unknowns. |
+| **how** | "source này upload lên bucket ở đâu", "chuyển sang provider khác cần sửa gì" | Goal in one line → facts → small scope: the first mate reads it itself, including catch blocks and auth; large scope: 2 to 4 explorers in parallel, always with an error-paths-and-security angle for changes and migrations → overview, how it works with `file:line`, smallest change, gotchas, unknowns. |
 | **investigate** | "pod prod-core-insurance bị gì", "sao pipeline không trigger" | Symptom → hypotheses → one explorer per hypothesis (CONFIRMED / KILLED / OPEN) → cause, evidence, fix commands for you. Remote hosts and prod shells: you run the commands and paste the output. |
 | **change** | "tăng retention tempo", "thêm alert rule", "sửa .gitlab-ci.yml" | Plan (smallest change, risk) → your go → worker edits a task workspace → `fm.sh gate` → checker → delivered to your working tree, uncommitted. |
 
 Each role answers in a fixed format (EXPLORER REPORT, WORKER REPORT, checker VERDICT). The first mate rejects a report that lacks the evidence its format asks for, respawns once, and then lists the gap; a gap is never presented as a result.
 
-Gemini follows written rules more loosely than the models pstack was built on, so two hooks back the playbooks with code: `inject.js` repeats each role's rules before every model turn, and `guard.js` gives the first mate 6 direct reads or commands per captain message. The first mate also has no search or listing tools.
+Gemini follows written rules more loosely than the models pstack was built on, so two hooks back the playbooks with code: `inject.js` repeats each role's rules before every model turn, and `guard.js` gives the first mate 6 direct reads or commands per captain message. The budget resets on each new captain message (a new `USER_INPUT` step in the chat transcript; subagent reports and background-task completions do not count), with a fallback to a new execution or 5 idle minutes; resets are logged to `budget.log`. A chat the App has not indexed yet (its first model call) is treated as a first mate when it runs on Argon. Listing tools in the agent manifest does not restrict the main agent in the App, so the budget is the real limit.
 
 ```mermaid
 sequenceDiagram

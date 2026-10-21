@@ -5,6 +5,7 @@ const path = require('path');
 
 const STATE_DIR = process.env.FM_STATE_DIR || path.join(os.tmpdir(), 'flash-ultra-loop-guard');
 const CONVO_DB = process.env.FM_CONVO_DB || path.join(os.homedir(), '.gemini', 'antigravity', 'conversation_summaries.db');
+const BRAIN_DIR = process.env.FM_BRAIN_DIR || path.join(os.homedir(), '.gemini', 'antigravity', 'brain');
 const STATE_TTL_MS = 24 * 60 * 60 * 1000;
 const PLUGIN_DIR = path.resolve(__dirname, '..');
 const DIRECT_MAX = 6; // first mate's own reads/commands per captain message
@@ -62,10 +63,34 @@ function budgetUsed(id) {
   try { return fs.readFileSync(stateFile(id, 'direct'), 'utf8').length / 2; } catch { return 0; }
 }
 
-// The agent a chat runs (firstmate, worker, explorer, checker, or '' for the default agent or not yet
-// indexed), read from the App's conversation index. A row with an empty agent name is cached as 'none';
-// a missing row is retried on the next call.
-function agentOf(id, st) {
+// Step index of the captain's latest message, read from the tail of the chat transcript, or undefined.
+// Subagent reports and background-task completions also start new executions; only a USER_INPUT step
+// is a new captain message.
+function lastUserStep(id, ev) {
+  const files = [path.join(BRAIN_DIR, String(id), '.system_generated', 'logs', 'transcript.jsonl'), ev && ev.transcriptPath].filter(Boolean);
+  for (const f of files) {
+    try {
+      const fd = fs.openSync(f, 'r');
+      const size = fs.fstatSync(fd).size;
+      const len = Math.min(size, 512 * 1024);
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, size - len);
+      fs.closeSync(fd);
+      const lines = buf.toString('utf8').split('\n');
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (!lines[i].includes('"USER_INPUT"')) continue;
+        try { const d = JSON.parse(lines[i]); if (d.type === 'USER_INPUT') return d.step_index; } catch {}
+      }
+    } catch {}
+  }
+  return undefined;
+}
+
+// The agent a chat runs (firstmate, worker, explorer, checker, or '' for the default agent), read from
+// the App's conversation index. A row with an empty agent name is cached as 'none'. The App indexes a
+// chat only after its first model call, so a chat that is not indexed yet and runs on Argon is treated
+// as a first mate (not cached); a missing row is retried on the next call.
+function agentOf(id, st, model) {
   if (!st.agent && id) {
     try {
       const { DatabaseSync } = require('node:sqlite');
@@ -75,7 +100,8 @@ function agentOf(id, st) {
       if (row) st.agent = row.agent_name || 'none';
     } catch {}
   }
-  return st.agent && st.agent !== 'none' ? st.agent : '';
+  if (!st.agent) return /argon/i.test(String(model || '')) ? 'firstmate' : '';
+  return st.agent !== 'none' ? st.agent : '';
 }
 
-module.exports = { STATE_DIR, PLUGIN_DIR, DIRECT_MAX, unwrap, loadState, saveState, agentOf, resetBudget, spendBudget, budgetUsed, budgetLog };
+module.exports = { STATE_DIR, PLUGIN_DIR, DIRECT_MAX, unwrap, loadState, saveState, agentOf, lastUserStep, resetBudget, spendBudget, budgetUsed, budgetLog };

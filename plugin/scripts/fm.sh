@@ -33,6 +33,9 @@ task_name() {
 
 need_repo() { R=$(main_checkout "$REPO_ARG") || die "'$REPO_ARG' is not a git repo; run: fm.sh init <repo>"; }
 
+# absolute path of the repo's local-only exclude file (shared by all worktrees)
+exclude_file() { echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)/info/exclude"; }
+
 case "$CMD" in
 init)
   NEW=0
@@ -40,7 +43,7 @@ init)
     git -C "$REPO_ARG" init -q -b main; NEW=1
   fi
   need_repo; cd "$R"
-  EX="$(git rev-parse --git-common-dir)/info/exclude"; mkdir -p "$(dirname "$EX")"; touch "$EX"
+  EX=$(exclude_file "$R"); mkdir -p "$(dirname "$EX")"; touch "$EX"
   grep -qxF ".firstmate/" "$EX" || printf '\n# firstmate workspace (this machine only)\n.firstmate/\n' >> "$EX"
   mkdir -p .firstmate/wt .firstmate/notes
   if [ ! -f .firstmate/facts.md ]; then
@@ -84,7 +87,7 @@ start)
   git -C "$R" update-ref "refs/firstmate/$T/head" "$BASE"
   # git-ignored dependencies and env files are not in a fresh worktree; link them from the captain's
   # checkout so builds and tests run, and exclude the links (by exact path) so a save never commits them
-  EX="$(git -C "$R" rev-parse --git-common-dir)/info/exclude"; LINKED=0
+  EX=$(exclude_file "$R"); mkdir -p "$(dirname "$EX")"; LINKED=0
   while IFS= read -r p; do
     p=${p%/}; [ -n "$p" ] || continue
     case "$(basename "$p")" in node_modules|.venv|venv|vendor|.env|.env.local|.env.test|.env.development|.env.development.local|.env.test.local) ;; *) continue ;; esac
