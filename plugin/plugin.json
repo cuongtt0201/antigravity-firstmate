@@ -1,7 +1,7 @@
 {
   "name": "flash-ultra",
   "displayName": "Firstmate Crew",
-  "version": "0.9.3",
+  "version": "0.10.0-dev",
   "description": "Argon routes each request to a playbook (quick, how, investigate, change) and judges; Flash explorers read with file:line evidence, Flash workers edit in the model's own task workspaces, a Flash checker verifies, and code gates every change before it reaches you as uncommitted edits. Blocks agents from applying, deleting or pushing.",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [

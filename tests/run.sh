@@ -73,6 +73,31 @@ CASES
 check "explorer write tool" deny "$(guard ex write_to_file '{"TargetFile":"/x/a.ts"}')"
 check "worker may write" allow "$(guard wk write_to_file '{"TargetFile":"/x/a.ts"}')"
 
+echo "== guard: MCP tools (read verbs pass; the rest asks the captain; explorers are denied)"
+mcp() { guard "$1" call_mcp_tool "{\"ServerName\":\"$2\",\"ToolName\":\"$3\",\"Arguments\":{},\"toolAction\":\"Delete the export\",\"toolSummary\":\"Delete export\"}"; }
+for t in list_buckets get_bucket_metadata read_text read_object search_documents answer_query execute_sql_readonly execute_sql_read_only get_query_results lookup_entry describe_instance listBuckets getObjectMetadata; do
+  check "mcp read: $t" allow "$(mcp plain some-server "$t")"
+done
+for t in download_object set_read_only delete_readonly_replica delete_object delete_bucket write_text execute_sql restore_backup update_database_schema commit send_message merge_pull_request push_files add_issue_comment deleteObject delete-object run_query create_session; do
+  check "mcp change asks: $t" force_ask "$(mcp plain some-server "$t")"
+  check "mcp change denied for explorer: $t" deny "$(mcp ex some-server "$t")"
+done
+check "mcp unknown verb asks" force_ask "$(mcp plain some-server frobnicate)"
+check "structure viewer is exempt" allow "$(mcp plain science_biomolecular_structure_viewer_mcp remove_annotation)"
+check "native mcp read tool" allow "$(guard plain mcp_gemini-api_gemini-api-docs_gemini_search_docs '{"query":"x"}')"
+check "native mcp delete tool asks" force_ask "$(guard plain mcp_data-agent-kit-plugin_dak-bigtable_delete_table '{}')"
+check "other arg key names" force_ask "$(guard plain call_mcp_tool '{"server_name":"dak-gcs","tool_name":"delete_object"}')"
+check "mcp calls are logged with keys" 1 "$(grep -c "call_mcp_tool list_buckets keys=ServerName,ToolName,Arguments,toolAction,toolSummary" "$FM_STATE_DIR/mcp.log")"
+check "toolSummary text is not taken as the tool name" allow "$(guard plain call_mcp_tool '{"toolSummary":"Delete old files","ServerName":"x","ToolName":"list_objects"}')"
+
+echo "== agent manifests: every tool name is one the App accepts"
+KNOWN="view_file list_dir grep_search find_by_name run_command write_to_file replace_file_content multi_replace_file_content invoke_subagent manage_subagents send_message ask_question manage_task search_web read_url_content"
+for f in "$P"/agents/*.md; do
+  for t in $(ruby -ryaml -e 'puts Array(YAML.safe_load(File.read(ARGV[0],encoding:"UTF-8").split(/^---\s*$/)[1])["tools"])' "$f"); do
+    case " $KNOWN " in *" $t "*) ok ;; *) bad "unknown tool '$t' in $(basename "$f")" ;; esac
+  done
+done
+
 echo "== guard: subagents pinned to Flash"
 OUT=$(node -e 'process.stdout.write(JSON.stringify({conversationId:"pin",toolCall:{name:"invoke_subagent",args:{Subagents:[{TypeName:"explorer",Model:"inherit"},{TypeName:"worker"}]}}}))' | node "$GUARD" 2>/dev/null)
 check "explorer+worker pinned" 2 "$(grep -o '"Model":"flash"' <<< "$OUT" | wc -l | tr -d ' ')"

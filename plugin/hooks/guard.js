@@ -117,6 +117,50 @@ function judge(seg) {
   return null;
 }
 
+// MCP tools. Only tools whose name reads as a read (get, list, read, search, …, or *read_only*) pass;
+// everything else asks the captain, and explorers (read-only) are denied. The name is normalised from
+// camelCase and kebab-case, so deleteObject and delete-object are caught. The structure viewer only
+// changes what its own panel shows, so it is exempt.
+const MCP_READ_VERBS = new Set(['get', 'list', 'read', 'search', 'describe', 'lookup', 'fetch', 'find', 'view', 'answer',
+  'count', 'check', 'inspect', 'show', 'explain', 'preview', 'retrieve', 'browse', 'stat', 'head', 'info']);
+const MCP_CHANGE_VERBS = new Set(['delete', 'drop', 'create', 'update', 'restore', 'import', 'export', 'commit', 'write',
+  'insert', 'clone', 'upgrade', 'cancel', 'patch', 'replace', 'remove', 'truncate', 'move', 'copy', 'deploy', 'send',
+  'post', 'put', 'push', 'merge', 'add', 'run', 'execute', 'start', 'stop', 'restart', 'apply', 'grant', 'revoke',
+  'rename', 'upload', 'publish', 'archive', 'enable', 'disable', 'reset', 'trigger', 'set', 'modify', 'edit',
+  'approve', 'close', 'submit', 'assign', 'invite', 'transfer', 'kill', 'scale', 'rollback', 'download']);
+const MCP_EXEMPT_RE = /biomolecular_structure_viewer/i;
+const MCP_SERVER_KEYS = ['ServerName', 'serverName', 'server_name', 'Server', 'server'];
+const MCP_TOOL_KEYS = ['ToolName', 'toolName', 'tool_name', 'Tool', 'tool', 'Name', 'name', 'Method', 'method'];
+const nameWords = (s) => String(s).replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+function mcpTool(tool, args) {
+  if (tool === 'call_mcp_tool') {
+    const server = MCP_SERVER_KEYS.map((k) => args[k]).find((v) => typeof v === 'string') || '';
+    const name = MCP_TOOL_KEYS.map((k) => args[k]).find((v) => typeof v === 'string') || '';
+    return { server, name };
+  }
+  if (tool.startsWith('mcp_')) return { server: '', name: tool };
+  return null;
+}
+// 'read' | 'change' | 'unknown'
+function mcpKind(name) {
+  if (/(^|_)execute_sql_read_?only$/i.test(name)) return 'read';
+  const w = nameWords(name);
+  if (w.some((x) => MCP_CHANGE_VERBS.has(x))) return 'change';
+  if (w.some((x) => MCP_READ_VERBS.has(x))) return 'read';
+  return 'unknown';
+}
+function mcpPolicy(tool, args, agent) {
+  const t = mcpTool(tool, args);
+  if (!t) return null;
+  const label = `MCP tool "${t.name || '?'}"${t.server ? ` on ${t.server}` : ''}`;
+  if (!t.name) return { decision: 'force_ask', reason: `[guard] ${label}: the tool name could not be read; the captain must approve it.` };
+  if (MCP_EXEMPT_RE.test(`${t.server} ${t.name}`)) return null;
+  const kind = mcpKind(t.name);
+  if (kind === 'read') return null;
+  if (agent === 'explorer') return { decision: 'deny', reason: `[guard] Explorers are read-only. ${label} is not a read. Report what you would run under OPEN QUESTIONS.` };
+  return { decision: 'force_ask', reason: `[guard] ${label} ${kind === 'change' ? 'changes data or infrastructure' : 'is not a recognised read'}; the captain must approve it.` };
+}
+
 function commandPolicy(cmd) {
   for (const seg of cmd.split(/&&|\|\||;|\||\n|`|\$\(/)) {
     const d = judge(seg);
@@ -195,6 +239,21 @@ function main() {
     if (cost > 0 && spendBudget(convoId, cost) > DIRECT_MAX) {
       decision = { decision: 'deny', reason: `[firstmate budget] You already used your ${DIRECT_MAX} direct reads/commands for this captain message. Send the rest to explorer subagents (one invoke_subagent call, TypeName "explorer", each with one angle) and read their reports; or answer with what you have and list what is not verified.` };
     }
+  }
+
+  // MCP tools: reads pass, the rest asks the captain (explorers: denied).
+  if (decision.decision === 'allow') {
+    const t = mcpTool(tool, args);
+    if (t) {
+      // record the call shape (tool name and argument keys, no values) so a live run shows the real schema
+      try { fs.appendFileSync(path.join(STATE_DIR, 'mcp.log'), `${new Date().toISOString()} ${convo} ${agent || '-'} ${tool} ${t.name || '?'} keys=${Object.keys(args).join(',')}\n`); } catch {}
+      // the first mate's MCP reads count toward its budget like any other read
+      if (agent === 'firstmate' && mcpKind(t.name) === 'read' && spendBudget(convoId, 1) > DIRECT_MAX) {
+        decision = { decision: 'deny', reason: `[firstmate budget] You already used your ${DIRECT_MAX} direct reads/commands for this captain message. Send MCP reading to explorer subagents too.` };
+      }
+    }
+    const m = decision.decision === 'allow' ? mcpPolicy(tool, args, agent) : null;
+    if (m) decision = m;
   }
 
   // Explorers are read-only: no write tools, and no command that changes files in the captain's checkout.

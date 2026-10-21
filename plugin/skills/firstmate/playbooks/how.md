@@ -10,8 +10,8 @@ Copy these steps as your checklist. Mark each done, or `skip: <reason>`.
    - small (one module, a handful of files, roughly 500 lines): read it yourself within your direct-read budget. Read the functions the goal touches in full, including their catch blocks, fallbacks and the auth or validation in front of them.
    - large, several modules, or your budget runs out: explorers, all in ONE invoke_subagent call (`TypeName: "explorer"`, `Workspace: "inherit"`), each with a distinct angle. Typical angles: entry points and routes; data, config and environment; build, deploy and runtime.
    - When the goal is a change, a migration or a switch of provider, one explorer (or your own reading) ALWAYS covers **error paths and security** of the code the goal touches: what happens on failure, who can call it, what old data or clients depend on it.
-   Each explorer brief: the goal, the angle, the repo path, the facts path, and "report in the EXPLORER REPORT format".
-4. **Check the reports.** A report without `file:line` evidence or labels is rejected: respawn that explorer once with the missing parts named; after a second miss, list the angle as not verified. A gap is never presented as an answer. (Skip this step when you read it yourself.)
+   Each explorer brief: the goal, the angle, the repo path, the facts path, `skills:` (0 to 3 that fit the angle), and "report in the EXPLORER REPORT format".
+4. **Check the reports.** A report without `file:line` evidence or labels is rejected: send_message to the same explorer once, naming the missing parts; after a second miss, list the angle as not verified. A gap is never presented as an answer. (Skip this step when you read it yourself.)
 5. **Answer** with these sections (drop a section only when it is empty):
    - Overview: the answer to the question, in 2 to 4 lines.
    - How it works: the path through the code, with `file:line`.

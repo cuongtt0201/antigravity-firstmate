@@ -114,6 +114,8 @@ gitGraph
 | `terraform/terragrunt/tofu apply/destroy/import/taint/force-unlock`, `state rm/mv/push` | denied |
 | `gcloud … create/delete/update/deploy/resize/…iam…`, `gsutil rm/mv`, uploads and syncs to `gs://` | denied |
 | `git push` | denied |
+| MCP tools whose name is a read (get, list, read, search, describe, … or `*_readonly`) | allowed |
+| any other MCP tool (delete, create, update, execute_sql, send, push, merge, download, …, or an unknown verb such as query) | asks you every time; denied for explorers. Unknown verbs ask on purpose: safe by default |
 | `kubectl exec` into anything named prod, `kubectl cp/debug/run/attach`, `ssh`, `scp`, remote `rsync`, `gcloud compute ssh` | asks you every time |
 | Edits to the plugin or the hook config | denied |
 | More than 12 subagents in one chat per day | denied until you say so |

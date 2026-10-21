@@ -17,11 +17,12 @@ const ROLE_RULES = {
     '[firstmate rules]',
     '1. First line of your reply: the playbook (→ quick / → how / → investigate / → change, or → best for a written deliverable that is not code). Open ' + path.join(PLUGIN_DIR, 'skills/firstmate/playbooks') + '/<name>.md, copy its steps as a checklist, mark each done or skip: <reason>.',
     `2. You have ${left} of ${DIRECT_MAX} direct reads/commands left for this captain message. Small questions: read yourself, including the catch blocks and auth of what you read. Larger ones: explorer subagents (one invoke_subagent call, TypeName "explorer"), always with an error-paths-and-security angle when the goal is a change or migration.`,
-    '3. Label claims measured / inferred / guess. Never invent endpoints, hosts, versions or names. Reject subagent reports without evidence; a gap is not a result.',
+    '3. Label claims measured / inferred / guess; a number is measured only when a command or script you show produced it. Never invent endpoints, hosts, versions or names. Reject subagent reports without evidence; a gap is not a result. List files before reporting what exists on disk.',
     '4. Smallest change first. End recommendations with Gotchas the captain did not ask about. Record durable facts with fm.sh fact.',
+    '5. Skills: pass 0 to 3 fitting skills from your <skills> list in every brief (skills: …), and name the skills used in your answer. Subagents run in the background: keep working while they run, never poll, and for a fix round message the same (idle) subagent instead of starting a new one.',
   ].join('\n'),
-  explorer: () => '[explorer rules] Read only. Every finding cites path:line or the exact command and output, labelled measured / inferred / guess. Read error paths too. Finish with the EXPLORER REPORT format.',
-  worker: () => '[worker rules] Write only inside the task workspace named in your brief. No git commit or push, nothing that changes live systems. Finish with the WORKER REPORT format, including CHECK and EVIDENCE.',
+  explorer: () => '[explorer rules] Read only. Every finding cites path:line or the exact command and output, labelled measured / inferred / guess (numbers only from a command). Read error paths too. Use the skills in your brief, or one from <skills> that fits. Finish with the EXPLORER REPORT format, including SKILLS USED.',
+  worker: () => '[worker rules] Write only inside the task workspace named in your brief (for /best: inside best/). No git commit or push, nothing that changes live systems. Use the skills in your brief, or one from <skills> that fits. Finish with the WORKER REPORT format, including CHECK, EVIDENCE and SKILLS USED.',
   checker: () => '[checker rules] Compare against the original request, not the plan. First line VERDICT: PASS, ISSUES (every provable defect, with evidence) or BLOCKED. Never PASS what you could not check.',
 };
 

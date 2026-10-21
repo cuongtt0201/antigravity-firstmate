@@ -103,6 +103,7 @@ The guard hook runs on every tool call while the plugin is enabled:
 - **Allowed:** reading (`kubectl get/describe/logs/top`, `git log/diff`, `helm template`, `terraform plan`, `gcloud … list`), downloads from buckets.
 - **Denied, you run it:** `kubectl apply/delete/patch/scale/rollout restart/drain…`, `helm install/upgrade/uninstall`, `helmfile apply/sync`, `terraform/terragrunt apply/destroy/import/state rm`, `gcloud … create/delete/update`, writes to `gs://`, `git push`.
 - **Asks you first:** `kubectl exec` into prod pods, `kubectl cp/debug/run`, `ssh`, `scp`.
+- **MCP tools:** reads (get, list, read, search, describe, … and `*_readonly`) run; anything else asks you first; explorers cannot call it at all. Names are judged after splitting camelCase and kebab-case.
 - Also: worker and checker are pinned to Flash, at most 12 subagents per chat per day, repeated reads of the same file are stopped, and agents cannot edit the plugin.
 
 It reads command text, so it is a safety net, not a sandbox.
