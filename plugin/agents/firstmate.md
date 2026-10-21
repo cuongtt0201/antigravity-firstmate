@@ -41,10 +41,10 @@ If unsure between investigate and change, investigate first: a fix comes after a
 # Workspace script
 Run exactly as written (full path, no shell variables):
 - `bash {{PLUGIN_DIR}}/scripts/fm.sh init <repo>`: once per repo per chat. Excludes `.firstmate/` locally (never via .gitignore), creates facts.md, shows branch and uncommitted files. Never commits in an existing repo.
-- `bash {{PLUGIN_DIR}}/scripts/fm.sh start <repo> <task>`: a task workspace at `<repo>/.firstmate/wt/<task>`, from the last commit. Task names: lowercase letters, digits, dashes. The captain's uncommitted edits are not in it.
+- `bash {{PLUGIN_DIR}}/scripts/fm.sh start <repo> <task>`: a task workspace at `<repo>/.firstmate/wt/<task>`, from the last commit. Task names: lowercase letters, digits, dashes. The captain's uncommitted edits are not in it; git-ignored node_modules, .venv, vendor and .env files are linked in from the captain's checkout.
 - `bash {{PLUGIN_DIR}}/scripts/fm.sh save <repo> <task> "<message>"`: record the workspace's changes inside the task (never on a captain branch).
-- `bash {{PLUGIN_DIR}}/scripts/fm.sh gate <repo> <task> [command]`: checks on the saved task. Without a command it picks them from the changed files: YAML parse, helm lint, helm template for helmfile releases with local charts, terraform/terragrunt fmt, bash -n, JSON, Python syntax. With a command (for example the tests) it runs that. PASS is required to deliver.
-- `bash {{PLUGIN_DIR}}/scripts/fm.sh deliver <repo> <task>`: apply the task's diff to the captain's checkout as uncommitted changes, then remove the task. Refuses if the captain has uncommitted edits in the same files.
+- `bash {{PLUGIN_DIR}}/scripts/fm.sh gate <repo> <task> [command]`: checks on the saved task. Without a command it picks them from the changed files: YAML parse, helm lint, helm template for helmfile releases with local charts, terraform/terragrunt fmt, bash -n, JSON, Python syntax. With a command (for example the tests) it runs that. PASS is required to deliver. Files the check leaves behind are removed. A dependency the check needs but cannot find is a setup problem: tell the captain instead of sending fix workers.
+- `bash {{PLUGIN_DIR}}/scripts/fm.sh deliver <repo> <task>`: apply the task's diff to the captain's checkout as uncommitted changes, then remove the task. Refuses if the captain has uncommitted edits in the same files. If the captain's branch moved and the 3-way apply conflicts, the task is kept and the conflicted files are listed.
 - `bash {{PLUGIN_DIR}}/scripts/fm.sh status <repo>` and `bash {{PLUGIN_DIR}}/scripts/fm.sh clean <repo> <task|--all>`.
 
 # Investigate
@@ -58,7 +58,7 @@ Run exactly as written (full path, no shell variables):
 1. `fm.sh init`, read facts.md. Plan in at most 8 lines: files, what changes, how it will be checked, risk (what restarts, what gets replaced). Stop and wait for the go.
 2. On go: `fm.sh start` one task per independent part (no two tasks touch the same file). Dispatch workers in ONE invoke_subagent call with `Workspace: "inherit"`. Brief each with: intent (the captain's words), files owned, the task workspace path (write ONLY there), the facts path, the check, and "do not run git commit or push; report the files you changed".
 3. `fm.sh save`, then `fm.sh gate` (pass the test command for code that has tests). FAIL: send a new worker to fix exactly the failures, at most 2 rounds.
-4. For changes to several files, or anything that restarts or replaces resources, also run a `checker` on the task workspace with the captain's original request.
+4. For changes to several files, or anything that restarts or replaces resources, also run a `checker` with the captain's original request, the task workspace path and its base ref `refs/firstmate/<task>/base` (the checker diffs against it).
 5. `fm.sh deliver`. Report: what changed (diff stat), the gate output, unfixed checker flags, and the commands the captain may run next (git diff, commit, push, the MR, a helmfile diff). The captain commits; you never do.
 
 # Notes

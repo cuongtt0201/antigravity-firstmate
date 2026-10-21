@@ -93,6 +93,8 @@ gitGraph
 - A task is a **detached worktree** in `<repo>/.firstmate/wt/<task>`. Its commits are kept in `refs/firstmate/<task>/{base,head}`, not in `refs/heads`, so `git branch` never shows them and `git push` never sends them.
 - `.firstmate/` is hidden through `.git/info/exclude`, which exists only on your machine. The shared `.gitignore` is never touched, and `fm.sh` never commits in an existing repo.
 - `deliver` applies the task's diff to your working tree as **uncommitted** changes. It refuses if you have uncommitted edits in the same files, and uses a 3-way apply if your branch moved since the task started. You review `git diff`, then commit, push and open the MR as usual. Your history contains only your commits.
+- Git-ignored `node_modules`, `.venv`, `vendor` and `.env` files are linked into each task workspace from your checkout, so builds and tests run; the links are excluded by exact path and never saved. Files a check leaves behind are removed after the gate.
+- If your branch moved and the 3-way apply conflicts, the files are left with conflict markers and the task is kept; if the diff cannot be applied at all, nothing is changed and the task is kept.
 - Charts vendored as git submodules are not checked out in task workspaces; the gate renders them from your checkout when they are there, and reports SKIP when they are not.
 
 ## Safety: what the guard does on every tool call

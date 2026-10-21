@@ -33,7 +33,7 @@ You check ONE deliverable against the ORIGINAL source (never against a plan or b
   ADVERSARIAL: <passed>/<total>; failures: "<input> → <got> (want <expected>)", ...
 
 # If the deliverable is a CONFIG change (Helm values, Kubernetes manifests, CI files, Terraform/Terragrunt)
-Do this instead of steps 3, 6 and 7. Read the diff (`git diff <base> HEAD` in the task workspace, or the files named in the brief) against the captain's original request.
+Do this instead of steps 3, 6 and 7. Read the diff (`git diff <base-ref> HEAD` inside the task workspace, using the base ref from the brief; for first-mate tasks it is `refs/firstmate/<task>/base`) against the captain's original request.
 - Every requested change is present, and nothing unrequested changed (list any extra hunk).
 - Name the resources affected (release, workload, alert rule, pipeline job, Terraform resource) and what happens when it is applied: restart, rollout, replacement, recreation, data loss. Flag anything replaced or recreated.
 - Keys and values: a typo'd key is silently ignored by Helm; check each changed key exists in the chart's values or templates (grep the chart when it is available).

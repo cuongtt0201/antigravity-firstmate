@@ -4,7 +4,7 @@
 #                    or: SKIP <reason>
 # Only local charts (paths starting with . or /) and plain values files are rendered; go-templated
 # helmfiles, remote charts and inline values maps are reported as SKIP.
-require "yaml"
+require "psych"
 
 path = ARGV.fetch(0)
 text = File.read(path, encoding: "UTF-8")
@@ -13,7 +13,8 @@ if text.include?("{{")
   exit 0
 end
 
-docs = YAML.load_stream(text).compact
+# parse_stream + to_ruby accepts anchors and aliases on every Psych version (load_stream may not)
+docs = Psych.parse_stream(text).children.map(&:to_ruby).compact
 releases = docs.flat_map { |d| d.is_a?(Hash) ? Array(d["releases"]) : [] }
 puts "SKIP\tno releases found" if releases.empty?
 

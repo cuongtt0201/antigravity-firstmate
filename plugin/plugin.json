@@ -1,7 +1,7 @@
 {
   "name": "flash-ultra",
   "displayName": "Firstmate Crew",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Argon plans and judges, Flash does the work: a first mate answers quick questions, investigates incidents with read-only Flash workers, and makes config/IaC/code changes in its own task workspaces, checked by code and delivered to you as uncommitted changes. Blocks agents from applying, deleting or pushing.",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [

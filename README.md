@@ -86,7 +86,8 @@ The model works in its own space inside your repo and never touches your branche
 
 - Task workspaces are detached worktrees under `.firstmate/wt/`, tracked by `refs/firstmate/*`. They never show up in `git branch` and are never pushed.
 - `.firstmate/` is hidden through `.git/info/exclude`, which exists only on your machine. The shared `.gitignore` is not changed, and nothing is committed for you.
-- A finished change is applied to your working tree, uncommitted. If you have unsaved edits in the same files, delivery stops and tells you.
+- A finished change is applied to your working tree, uncommitted. If you have unsaved edits in the same files, delivery stops and tells you; if it cannot apply cleanly, the task is kept.
+- Git-ignored `node_modules`, `.venv` and `.env` are linked into task workspaces from your checkout so tests run there; they are never saved into a task.
 - `.firstmate/facts.md` keeps what the first mate learned about the repo (which services are Node, what has tracing, environments). When you correct it, it writes the fact down so the next chat does not repeat the mistake.
 
 ## Safety

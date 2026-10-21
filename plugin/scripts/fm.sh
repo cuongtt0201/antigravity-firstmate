@@ -72,7 +72,19 @@ start)
   git -C "$R" worktree add -q --detach "$W" "$BASE"
   git -C "$R" update-ref "refs/firstmate/$T/base" "$BASE"
   git -C "$R" update-ref "refs/firstmate/$T/head" "$BASE"
+  # git-ignored dependencies and env files are not in a fresh worktree; link them from the captain's
+  # checkout so builds and tests run, and exclude the links (by exact path) so a save never commits them
+  EX="$(git -C "$R" rev-parse --git-common-dir)/info/exclude"; LINKED=0
+  while IFS= read -r p; do
+    p=${p%/}; [ -n "$p" ] || continue
+    case "$(basename "$p")" in node_modules|.venv|venv|vendor|.env|.env.local|.env.test|.env.development|.env.development.local|.env.test.local) ;; *) continue ;; esac
+    case "$p" in .firstmate|.firstmate/*) continue ;; esac
+    [ -e "$W/$p" ] && continue
+    mkdir -p "$(dirname "$W/$p")"; ln -s "$R/$p" "$W/$p"; LINKED=$((LINKED + 1))
+    grep -qxF "/$p" "$EX" || echo "/$p" >> "$EX"
+  done < <(git -C "$R" ls-files --others --ignored --exclude-standard --directory 2>/dev/null)
   echo "[fm] task $T: workspace $W (from $(git -C "$R" log -1 --format='%h %s' "$BASE"))"
+  [ "$LINKED" = 0 ] || echo "[fm] linked $LINKED git-ignored dependency/env path(s) from your checkout (node_modules, .venv, .env...)"
   [ -n "$(git -C "$R" status --porcelain)" ] && echo "[fm] note: the captain's uncommitted changes are NOT in this workspace"
   true
   ;;
@@ -103,6 +115,11 @@ gate)
     if bash "$HERE/fm-checks.sh" "$W" "refs/firstmate/$T/base" "$R" > "$NOTE.log" 2>&1; then V=PASS; else V=FAIL; fi
     cat "$NOTE.log"
   fi
+  LEFT=$(git -C "$W" status --porcelain)
+  if [ -n "$LEFT" ]; then
+    echo "[fm] the check left files in the workspace; removed so they are not delivered:"; sed 's/^/  /' <<< "$LEFT" | head -n 20
+    git -C "$W" checkout -q -- . ; git -C "$W" clean -fdq
+  fi
   echo "$HEADC $V" > "$NOTE"
   echo "[fm] gate $T: $V"
   [ "$V" = PASS ]
@@ -118,30 +135,38 @@ deliver)
   read -r GSHA GV < "$NOTE" 2>/dev/null || die "task '$T' has no gate result; run: fm.sh gate $R $T"
   [ "$GSHA" = "$(git -C "$R" rev-parse "$H")" ] || die "task '$T' changed after its gate; run the gate again"
   [ "$GV" = PASS ] || die "task '$T' gate is $GV; fix it first"
-  FILES=$(git -C "$R" diff --name-only "$B" "$H")
-  [ -n "$FILES" ] || die "task '$T' has no changes to deliver"
+  FILES=()
+  while IFS= read -r f; do [ -n "$f" ] && FILES+=("$f"); done < <(git -C "$R" diff --name-only "$B" "$H")
+  [ "${#FILES[@]}" -gt 0 ] || die "task '$T' has no changes to deliver"
   cd "$R"
-  BUSY=""; while IFS= read -r f; do [ -n "$(git status --porcelain -- "$f")" ] && BUSY="$BUSY $f"; done <<< "$FILES"
+  BUSY=""; for f in "${FILES[@]}"; do [ -n "$(git status --porcelain -- "$f")" ] && BUSY="$BUSY '$f'"; done
   [ -z "$BUSY" ] || die "you have uncommitted edits in:$BUSY. Commit or stash them, then deliver again."
   PATCH=$(mktemp); trap 'rm -f "$PATCH"' EXIT
   git diff --binary "$B" "$H" > "$PATCH"
+  CLEAN=1
   if git apply --check "$PATCH" 2>/dev/null; then
     git apply "$PATCH"
   else
     echo "[fm] your branch moved since the task started; applying with a 3-way merge"
-    git apply --3way "$PATCH" || true
-    while IFS= read -r f; do git reset -q -- "$f" 2>/dev/null || true; done <<< "$FILES"
-    CONFLICT=$(grep -l '^<<<<<<< ' $FILES 2>/dev/null || true)
-    [ -z "$CONFLICT" ] || echo "[fm] CONFLICT markers left in: $CONFLICT (resolve them by hand)"
+    RC=0; git apply --3way "$PATCH" || RC=$?
+    for f in "${FILES[@]}"; do git reset -q -- "$f" 2>/dev/null || true; done
+    CONFLICT=""; for f in "${FILES[@]}"; do [ -f "$f" ] && grep -q '^<<<<<<< ' "$f" && CONFLICT="$CONFLICT '$f'"; done
+    if [ -n "$CONFLICT" ]; then
+      CLEAN=0; echo "[fm] CONFLICT markers left in:$CONFLICT. Resolve them by hand; the task is kept (fm.sh clean $R $T when done)."
+    elif [ "$RC" != 0 ]; then
+      die "the task could not be applied to your branch (git apply --3way exit $RC); nothing was changed and the task is kept"
+    fi
   fi
-  echo "[fm] delivered task $T to $R as UNCOMMITTED changes on branch $(git rev-parse --abbrev-ref HEAD):"
-  git diff --stat=100 -- $FILES | tail -n 30
+  [ "$CLEAN" = 1 ] && STATE="UNCOMMITTED changes" || STATE="UNCOMMITTED changes WITH CONFLICTS"
+  echo "[fm] delivered task $T to $R as $STATE on branch $(git rev-parse --abbrev-ref HEAD):"
+  git diff --stat=100 -- "${FILES[@]}" | tail -n 30
   echo "[fm] review: git diff | then commit and push yourself"
-  if [ "$KEEP" != "--keep" ]; then
+  if [ "$KEEP" != "--keep" ] && [ "$CLEAN" = 1 ]; then
     [ -d "$W" ] && git worktree remove --force "$W"
     git update-ref -d "$B"; git update-ref -d "$H"; rm -f "$NOTE" "$NOTE.log"
     echo "[fm] task $T removed"
   fi
+  [ "$CLEAN" = 1 ]
   ;;
 
 status)

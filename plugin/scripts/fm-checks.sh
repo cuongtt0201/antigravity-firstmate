@@ -25,13 +25,12 @@ while IFS= read -r f; do
   base=$(basename "$f")
   case "$f" in
     *.yaml|*.yml)
-      case "$f" in */templates/*) ;; *)
-        if has ruby; then run "yaml $f" ruby -ryaml -e 'YAML.load_stream(File.read(ARGV[0], encoding: "UTF-8"))' "$f"
-        else skip "yaml $f (ruby not found)"; fi ;;
-      esac ;;
-    *.json) run "json $f" python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$f" ;;
+      if [[ $f == templates/* || $f == */templates/* ]] || grep -q '{{' "$f"; then skip "yaml $f (go template; checked by helm)"
+      elif has ruby; then run "yaml $f" ruby -rpsych -e 'Psych.parse_stream(File.read(ARGV[0], encoding: "UTF-8"))' "$f"
+      else skip "yaml $f (ruby not found)"; fi ;;
+    *.json) run "json $f" python3 -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$f" ;;
     *.sh) run "bash -n $f" bash -n "$f" ;;
-    *.py) run "python syntax $f" python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$f" ;;
+    *.py) run "python syntax $f" python3 -c 'import ast,sys; ast.parse(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1])' "$f" ;;
     *.tf)
       if has terraform; then run "terraform fmt $f" terraform fmt -check -diff "$f"
       else skip "terraform fmt $f (terraform not found)"; fi ;;
@@ -71,8 +70,11 @@ if [ -n "$HELMFILES" ]; then
       if [ ! -f "$cdir/Chart.yaml" ]; then skip "helm template $h: $name (chart $chart not available locally; submodule not checked out?)"; continue; fi
       args=(template "$name" "$cdir"); [ "$ns" != - ] && args+=(-n "$ns")
       IFS=$'\t' read -r -a vals <<< "${rest:-}"
-      for v in "${vals[@]}"; do [ -n "$v" ] && args+=(-f "$h/$v"); done
-      run "helm template $h: $name" helm "${args[@]}"
+      for v in ${vals[@]+"${vals[@]}"}; do [ -n "$v" ] && args+=(-f "$h/$v"); done
+      if out=$(helm "${args[@]}" 2>&1); then pass "helm template $h: $name"
+      elif grep -qiE 'missing in charts/ directory|update the dependencies|dependencies.*(missing|not found)' <<< "$out"; then
+        skip "helm template $h: $name (chart dependencies not built locally; run helm dependency build to check)"
+      else fail "helm template $h: $name" "$out"; fi
     done <<< "$PLAN"
   done <<< "$HELMFILES"
 fi

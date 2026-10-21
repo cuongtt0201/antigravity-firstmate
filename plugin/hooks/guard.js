@@ -72,6 +72,8 @@ const GCLOUD_DENY = new Set(['create', 'delete', 'update', 'deploy', 'resize', '
   'attach-disk', 'detach-disk', 'add-tags', 'remove-tags', 'add-metadata', 'remove-metadata', 'rm', 'mv', 'rsync']);
 const GSUTIL_DENY = new Set(['rm', 'mv', 'setmeta', 'acl', 'iam', 'defacl', 'lifecycle', 'retention']);
 
+// "prod" or "production" as a whole name part (prod-core, gke_prod, -n production), not "products"
+const PROD_RE = /(^|[\s/=_.:-])prod(uction)?([\s/=_.:-]|$)/i;
 const toBucket = (w) => { const args = w.slice(1).filter((x) => !x.startsWith('-')); return /^gs:\/\//.test(args[args.length - 1] || ''); };
 
 function judge(seg) {
@@ -89,7 +91,7 @@ function judge(seg) {
     if (name === 'rollout') return ['status', 'history'].includes(rest.find((x) => !x.startsWith('-'))) ? null : deny('changes a rollout');
     if (KUBE_DENY.has(name)) return deny('changes the cluster');
     if (KUBE_ASK.has(name)) return ask('creates or writes to a pod');
-    if (name === 'exec' && /prod/i.test(seg)) return ask('opens a shell or runs a command inside a production pod');
+    if (name === 'exec' && PROD_RE.test(seg)) return ask('opens a shell or runs a command inside a production pod');
   } else if (p === 'helm') {
     if (HELM_DENY.has(s(new Set(['-n', '--namespace', '--kube-context', '--kubeconfig'])).name)) return deny('changes a Helm release');
   } else if (p === 'helmfile') {
