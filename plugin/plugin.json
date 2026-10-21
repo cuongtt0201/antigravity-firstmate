@@ -1,12 +1,12 @@
 {
   "name": "flash-ultra",
   "displayName": "Firstmate Crew",
-  "version": "0.7.0",
-  "description": "Argon plans and judges, Flash does the work: a firstmate main agent splits the job, Flash workers build in their own git worktrees, a Flash checker verifies against the original request, and only passing work is merged. Also /best for best-of-3 deliverables.",
+  "version": "0.8.0",
+  "description": "Argon plans and judges, Flash does the work: a first mate answers quick questions, investigates incidents with read-only Flash workers, and makes config/IaC/code changes in its own task workspaces, checked by code and delivered to you as uncommitted changes. Blocks agents from applying, deleting or pushing.",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
-    "/firstmate Read TASK.md and complete it, with tests",
-    "/firstmate Add input validation to the API handlers and cover it with tests",
-    "/best Write a one-page project proposal from notes.md"
+    "Pod prod-core-insurance cứ restart, check giúp nguyên nhân",
+    "/change Thêm alert rule khi pod restart quá 3 lần trong 10 phút",
+    "Luồng xử lý của service này chạy như thế nào?"
   ]
 }

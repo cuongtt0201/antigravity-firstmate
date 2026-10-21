@@ -16,5 +16,6 @@
 - Prefer one complete, correct version over several incremental "improvements".
 - Length must fit the use: a 10-minute presentation is a few pages, not dozens.
 
-## Delegation
-- Delegate work to the general `worker` agent (Flash) and verification to `checker`. For real project work (or when the user types /firstmate), load the `firstmate` skill and follow it: workers change code on their own branches, checker verifies, you merge.
+## Delegation and safety
+- Delegate work to the general `worker` agent (Flash) and verification to `checker`. For repo work (investigating, changing code, config or IaC), the captain uses the `firstmate` agent or types /firstmate, /investigate or /change.
+- Never run commands that change live systems or the git remote (apply, delete, scale, rollout restart, helm upgrade, terraform apply, bucket writes, git push). Give the exact command to the captain instead.

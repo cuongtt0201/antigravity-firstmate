@@ -1,15 +1,13 @@
 # antigravity-firstmate
 
-A plugin for the **Google Antigravity App** that lets **Gemini Argon** run a crew of **Gemini Flash** subagents.
+A plugin for the **Google Antigravity App** that lets **Gemini Argon** run a crew of **Gemini Flash** subagents for everyday repo work: reading code, chasing incidents, and changing config, IaC, CI and code.
 
-Argon is strong but uses up its quota quickly. Flash is cheap, but left alone it tends to ship small, incremental fixes and confident-sounding claims it can't back up. This plugin puts each model where it is good:
+Argon is strong but uses up its quota quickly. Flash is cheap, but left alone it guesses at project context, ships small fixes, and makes confident claims it can't back up. The plugin puts each model where it is good, and puts code where neither should be trusted:
 
-- **First mate (Argon)** restates the goal, splits it into tasks, briefs the crew, judges the results and merges. It never edits project files itself.
-- **Workers (Flash)** do the actual work, each in its own git worktree, so parallel tasks don't overwrite each other.
-- **Checker (Flash)** verifies each branch against the *original* request, not against the plan. For code it runs the tests and at least 12 adversarial inputs of its own.
-- Only branches that pass the check get merged.
-
-The idea comes from the "captain → first mate → crew" pattern: you talk only to the first mate, and the first mate reports outcomes with evidence.
+- **First mate (Argon)** reads your message, picks a lane, plans and judges. It never edits your checkout.
+- **Flash workers** run the read-only commands of an investigation, or make a change in the model's own task workspace.
+- **Code checks the change** (`helm template`, lint, `terraform fmt`, your tests) before anything reaches you, and a Flash **checker** reviews bigger changes against your original request.
+- **You stay in charge of git and the live systems.** Changes arrive in your working tree as uncommitted edits; you commit, push and apply. A guard hook blocks agents from applying, deleting, scaling or pushing.
 
 ## How it works
 
@@ -19,116 +17,117 @@ flowchart TB
 
   subgraph app["Antigravity App"]
     direction TB
-    fm["<b>First mate</b> · Gemini Argon<br/>plans, briefs, judges, merges<br/><i>never edits project files</i>"]
+    fm["<b>First mate</b> · Gemini Argon<br/>picks the lane, plans, judges<br/><i>never edits your checkout</i>"]
     subgraph crew["Crew · Gemini Flash"]
       direction LR
-      w1["Worker 1"]
-      w2["Worker 2"]
+      inv["Investigators<br/><i>read-only commands</i>"]
+      wk["Workers<br/><i>edit one task workspace</i>"]
       ck["Checker<br/><i>read-only</i>"]
     end
-    caps[("Inherited skills,<br/>MCP, web search")]
-    guard{{"guard.js hook: pins crew to Flash,<br/>stops read loops, protects the plugin"}}
+    guard{{"guard.js hook: blocks live changes and pushes,<br/>asks before prod shells and ssh, pins crew to Flash"}}
   end
 
-  subgraph repo["Your project · git"]
+  subgraph repo["Your repo"]
     direction LR
-    wt1["worktree + branch 1"]
-    wt2["worktree + branch 2"]
-    main[("main")]
+    wt["Task workspaces<br/>.firstmate/wt/TASK<br/>refs/firstmate/TASK"]
+    gate["fm.sh gate<br/>helm template, lint,<br/>terraform fmt, tests"]
+    tree[("Your working tree<br/>on your branch")]
   end
 
-  you <-->|"request / report"| fm
-  fm -->|"check each branch"| ck
-  ck -->|"PASS / FAIL"| fm
-  fm -->|brief| w2
-  fm -->|brief| w1
-  caps -.-> crew
+  live[("Cluster, cloud, logs")]
+  remote[("Git remote · GitOps")]
+
+  you <-->|"message / report"| fm
+  fm -->|"investigate brief"| inv
+  fm -->|"change brief"| wk
+  fm -->|"check task"| ck
+  inv -.->|"get, describe, logs, top"| live
+  wk -->|"edit"| wt
+  wt --> gate
+  gate ==>|"PASS: deliver, uncommitted"| tree
+  tree -->|"you commit and push"| remote
   guard -.- crew
-  ck -.->|"tests + adversarial inputs"| wt2
-  ck -.-> wt1
-  w2 -->|commit| wt2
-  w1 -->|commit| wt1
-  wt1 ==>|"fm-merge.sh · PASS only"| main
-  wt2 ==> main
 ```
 
-The step-by-step sequence, the git model and where the tokens go are in [docs/architecture.md](docs/architecture.md).
+Every message lands in one of three lanes. The first mate names the lane on the first line of its reply; `/investigate` and `/change` force one.
+
+| Lane | For | What you get |
+|---|---|---|
+| **ask** | "lệnh nào để…", "luồng này chạy sao" | A short answer with the why |
+| **investigate** | a pod restarting, an alert, a pipeline that won't trigger, a failing API call | Cause and confidence, the evidence lines, and the fix as commands for you to run |
+| **change** | Helm values, alert rules, `.gitlab-ci.yml`, Terraform, scripts, code | A plan, then (after your go) a checked change in your working tree, uncommitted |
+
+The sequence of a change, the workspace model and the full guard table are in [docs/architecture.md](docs/architecture.md).
 
 ## Install
 
-Requires the Antigravity **App** (the IDE has no subagents) and Node.js 18+.
+Requires the Antigravity **App** (the IDE has no subagents), Node.js 18+, `git` and `bash`. `helm`, `terraform`/`terragrunt` and `ruby` (for YAML and helmfile checks) are used when present.
 
 ```bash
 npx -y github:cuongtt0201/antigravity-firstmate
 ```
 
-Then restart the Antigravity App. **Firstmate Crew** should appear under Customizations → Plugins.
-
-To update, run the same command again; the previous copy is backed up to your temp folder. To remove it:
+Restart the Antigravity App. **Firstmate Crew** should appear under Customizations → Plugins. To update, run the same command again (the previous copy is backed up to your temp folder). To remove it:
 
 ```bash
 npx -y github:cuongtt0201/antigravity-firstmate --uninstall
 ```
 
-The installer copies `plugin/` to `~/.gemini/config/plugins/flash-ultra/` and fills in absolute paths for your machine. It also enables the plugin in `~/.gemini/config/config.json` (after backing up that file) and makes the installed copy read-only, so agents cannot edit their own guardrails.
+The installer copies `plugin/` to `~/.gemini/config/plugins/flash-ultra/`, fills in the absolute paths for your machine, enables the plugin in `~/.gemini/config/config.json` (after backing it up) and makes the installed copy read-only, so agents cannot edit their own guardrails.
 
-## Setup that matters
+## Setup
 
-1. **Turn off Terminal Sandbox** (Settings). With the sandbox on, a worker inside its worktree cannot run `git` (the repository's `.git` lives outside the sandbox), `pip` or `uv` (no network).
-2. **Make the project a git repo *before* adding it to Projects.** The App decides whether worktrees are available when the folder is added. If it was added too early, the App says "Worktrees are not available for this project"; remove the project and add it again.
-3. **Open the main chat in Local mode**, not New Worktree, so merges land on `main`.
-4. Pick the **firstmate** agent with **Gemini 4 Argon**, then type `/firstmate <what you want>`.
+1. **Turn off Terminal Sandbox** in Settings. With it on, workers cannot run `git`, `helm` or package installs inside task workspaces.
+2. Open a chat in **Local** mode, pick the **firstmate** agent with **Gemini 4 Argon**, and talk normally. Quick one-off questions are cheaper in a plain Flash chat.
 
-Optional: `brew install uv` lets workers use the official Science plugin's skills (arXiv, OpenAlex, UniProt…).
+## Your branches stay yours
 
-## Usage
+The model works in its own space inside your repo and never touches your branches:
 
-```text
-/firstmate Read TASK.md and complete it, with tests
-/firstmate Add slugify_unique(titles) to slugify.py with tests. Merge into main.
-/best Write a one-page project proposal from notes.md
-```
+- Task workspaces are detached worktrees under `.firstmate/wt/`, tracked by `refs/firstmate/*`. They never show up in `git branch` and are never pushed.
+- `.firstmate/` is hidden through `.git/info/exclude`, which exists only on your machine. The shared `.gitignore` is not changed, and nothing is committed for you.
+- A finished change is applied to your working tree, uncommitted. If you have unsaved edits in the same files, delivery stops and tells you.
+- `.firstmate/facts.md` keeps what the first mate learned about the repo (which services are Node, what has tracing, environments). When you correct it, it writes the fact down so the next chat does not repeat the mistake.
 
-Behind `/firstmate`, the first mate runs these steps:
+## Safety
 
-1. **Intake**: restates the goal and acceptance criteria. If something is unclear, it asks you one question.
-2. **Init**: makes the project a git repo with a base commit.
-3. **Scout** (when there are unknowns): read-only workers look into the rules, the data and prior art, including a web search.
-4. **Plan**: `.firstmate/plan.md`, with the files each task owns and the check command for each task.
-5. **Build**: workers run in parallel, each in its own worktree, and commit on their own branch.
-6. **Check**: a checker verifies each branch.
-7. **Merge or fix**: up to 2 fix rounds per branch.
-8. **Report**: what shipped, the evidence, and any open issues.
+The guard hook runs on every tool call while the plugin is enabled:
 
-`/best` is for one-off deliverables such as reports, analyses or non-trivial code. Three workers write independent full versions from different angles, checkers score each one, Argon picks the winner and lists the fixes, and a worker rewrites the final version from scratch.
+- **Allowed:** reading (`kubectl get/describe/logs/top`, `git log/diff`, `helm template`, `terraform plan`, `gcloud … list`), downloads from buckets.
+- **Denied, you run it:** `kubectl apply/delete/patch/scale/rollout restart/drain…`, `helm install/upgrade/uninstall`, `helmfile apply/sync`, `terraform/terragrunt apply/destroy/import/state rm`, `gcloud … create/delete/update`, writes to `gs://`, `git push`.
+- **Asks you first:** `kubectl exec` into prod pods, `kubectl cp/debug/run`, `ssh`, `scp`.
+- Also: worker and checker are pinned to Flash, at most 12 subagents per chat per day, repeated reads of the same file are stopped, and agents cannot edit the plugin.
+
+It reads command text, so it is a safety net, not a sandbox.
 
 ## What's inside
 
 | Path | Purpose |
 |---|---|
-| `agents/firstmate.md` | Main agent (Argon). Plans, delegates, judges, merges; never edits project files |
-| `agents/worker.md` | Flash worker. Inherits installed skills, plugins and MCP servers; has web search |
-| `agents/checker.md` | Flash checker, read-only. Traces every claim to the source; runs tests plus adversarial inputs on code |
-| `skills/firstmate` | The `/firstmate` workflow |
-| `skills/best` | The `/best` best-of-N workflow |
-| `rules/AGENTS.md` | Always on: calm tone, no invented facts, get it right in the first full version |
-| `hooks/guard.js` | Pins worker and checker to Flash (the App otherwise passes `Model: "inherit"`), stops read loops, blocks edits to the plugin |
-| `scripts/fm-*.sh` | `fm-init` (repo plus base commit), `fm-status` (branches and worktrees), `fm-merge` (safe merge that aborts on conflict) |
+| `agents/firstmate.md` | Main agent (Argon): lanes, hard rules, investigate and change flows |
+| `agents/worker.md` | Flash worker; inherits installed skills, plugins and MCP servers; has web search |
+| `agents/checker.md` | Flash checker, read-only; code mode (tests, adversarial inputs) and config mode (impact, unknown keys) |
+| `skills/firstmate`, `skills/investigate`, `skills/change` | `/firstmate`, and the two commands that force a lane |
+| `skills/best` | `/best`: three independent drafts, scored, rewritten from the winner |
+| `rules/AGENTS.md` | Always on: calm tone, no invented facts, never change live systems |
+| `hooks/guard.js` | The guard described above |
+| `scripts/fm.sh` | The model's workspace: `init`, `start`, `save`, `gate`, `deliver`, `status`, `clean` |
+| `scripts/fm-checks.sh`, `scripts/fm-helmfile.rb` | Automatic checks picked from the changed files, including `helm template` for helmfile releases with local charts |
 
 ## Early results
 
-These come from the author's machine on Antigravity App 2.24, over a handful of runs. Read them as indications, not benchmarks.
+From the author's machine on Antigravity App 2.24, over a handful of runs with the earlier merge-based flow. Read them as indications, not benchmarks.
 
-- **Small coding task** (`slugify` plus tests) via `/firstmate`: done in about 12 minutes. The checker passed it with 18/18 adversarial inputs, and Argon accounted for about 20–24% of the tokens ([breakdown](docs/architecture.md#where-the-tokens-go)).
-- **Same project with worktrees** (`slugify_unique`, `slugify_many`): each worker built and committed in its own worktree and the result was merged into `main`, with 31/31 tests passing.
+- **Small coding task** (`slugify` plus tests): about 12 minutes; the checker passed it with 18/18 adversarial inputs; Argon used about 20–24% of the tokens ([breakdown](docs/architecture.md#where-the-tokens-go)).
+- **Parallel workers in worktrees** (`slugify_unique`, `slugify_many`): each worker built and committed in its own worktree, 31/31 tests passing.
 - **`/best` on a coding task**: the final version passed 20/20 hidden tests.
-- **ML competition planning** (analysis only, no training): Argon orchestrated Flash scouts. Rubric score went from 20.5/25 to 22/25 once workers could search the web, and Argon used about 13–16% of the new input and output tokens.
+- **ML competition planning** (analysis only): rubric score rose from 20.5/25 to 22/25 once workers could search the web; Argon used about 13–16% of the tokens.
 
 ## Known limitations
 
-- Worktrees depend on the App's `Workspace: "branch"` mode, which needs the two setup steps above.
-- Git-ignored data is not copied into worktrees. The first mate passes workers the absolute data path in the main project folder.
-- The checker is good but not exhaustive; it has missed an edge case or two. Review merges as you would any PR.
+- macOS and Linux only for now; Windows needs path fixes in the installer and the guard.
+- The gate checks syntax and rendering, not behaviour. Review the diff as you would any PR.
+- Charts vendored as git submodules render only if they are checked out in your own clone; otherwise the gate reports SKIP.
 
 ## Contributing
 

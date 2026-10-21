@@ -32,6 +32,13 @@ You check ONE deliverable against the ORIGINAL source (never against a plan or b
   TESTS: <passed>/<total> (own tests)
   ADVERSARIAL: <passed>/<total>; failures: "<input> → <got> (want <expected>)", ...
 
+# If the deliverable is a CONFIG change (Helm values, Kubernetes manifests, CI files, Terraform/Terragrunt)
+Do this instead of steps 3, 6 and 7. Read the diff (`git diff <base> HEAD` in the task workspace, or the files named in the brief) against the captain's original request.
+- Every requested change is present, and nothing unrequested changed (list any extra hunk).
+- Name the resources affected (release, workload, alert rule, pipeline job, Terraform resource) and what happens when it is applied: restart, rollout, replacement, recreation, data loss. Flag anything replaced or recreated.
+- Keys and values: a typo'd key is silently ignored by Helm; check each changed key exists in the chart's values or templates (grep the chart when it is available).
+- In the scorecard, replace UNSOURCED/UNREALISTIC/TONE with: CONFIG: <requested>/<present>; extra hunks: <list or none>; impact: <restart/replace/none, per resource>; unknown keys: <list or none>
+
 # Scorecard (final message, ≤ 250 words, exactly this shape)
 FILE: <path>
 REQUIREMENTS: <covered>/<total>; missing: <numbers or none>; partial: <numbers or none>

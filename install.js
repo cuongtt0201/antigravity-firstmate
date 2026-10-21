@@ -14,7 +14,7 @@ const PLUGINS_DIR = path.join(CONFIG_DIR, 'plugins');
 const TARGET = path.join(PLUGINS_DIR, NAME);
 const CONFIG = path.join(CONFIG_DIR, 'config.json');
 const SOURCE = path.join(__dirname, 'plugin');
-const TEMPLATED = ['hooks.json', 'agents/firstmate.md', 'skills/firstmate/SKILL.md'];
+const TEMPLATED_EXT = new Set(['.md', '.json']);
 
 const log = (m) => console.log(`[firstmate] ${m}`);
 const stamp = () => new Date().toISOString().replace(/[-:]/g, '').slice(0, 15);
@@ -71,11 +71,12 @@ function install() {
 
   fs.mkdirSync(PLUGINS_DIR, { recursive: true });
   fs.cpSync(SOURCE, TARGET, { recursive: true });
-  for (const rel of TEMPLATED) {
-    const f = path.join(TARGET, rel);
-    const text = fs.readFileSync(f, 'utf8').replaceAll('{{PLUGIN_DIR}}', TARGET).replaceAll('{{NODE}}', node);
-    fs.writeFileSync(f, text);
-  }
+  // Fill machine-specific paths into every manifest, agent and skill that mentions them.
+  walk(TARGET, (f, isDir) => {
+    if (isDir || !TEMPLATED_EXT.has(path.extname(f))) return;
+    const text = fs.readFileSync(f, 'utf8');
+    if (text.includes('{{')) fs.writeFileSync(f, text.replaceAll('{{PLUGIN_DIR}}', TARGET).replaceAll('{{NODE}}', node));
+  });
   lock(TARGET);
 
   editConfig((cfg) => {
