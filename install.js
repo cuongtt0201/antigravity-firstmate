@@ -86,7 +86,9 @@ function install() {
 
   const version = JSON.parse(fs.readFileSync(path.join(SOURCE, 'plugin.json'), 'utf8')).version;
   log(`installed ${NAME} v${version} -> ${TARGET}`);
-  log('next: restart the Antigravity App, then see the Setup section of the README.');
+  log('next: restart the Antigravity App, then RE-SELECT the firstmate agent in the agent picker');
+  log('      (pick another agent, then firstmate again). The App keeps a snapshot of the selected');
+  log("      agent's prompt and tools, so new chats keep using the old version until you re-select it.");
 }
 
 function uninstall() {

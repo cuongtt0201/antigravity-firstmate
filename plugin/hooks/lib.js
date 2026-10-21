@@ -87,21 +87,29 @@ function lastUserStep(id, ev) {
 }
 
 // The agent a chat runs (firstmate, worker, explorer, checker, or '' for the default agent), read from
-// the App's conversation index. A row with an empty agent name is cached as 'none'. The App indexes a
-// chat only after its first model call, so a chat that is not indexed yet and runs on Argon is treated
-// as a first mate (not cached); a missing row is retried on the next call.
+// the App's conversation index. The App indexes a chat only after its first model call and may write the
+// row before it fills in the agent name. So: a named agent is cached; a missing row, or an empty name on a
+// chat with at most 3 steps, counts as a first mate when the model is Argon and is not cached; an empty
+// name on an older chat is cached as 'none' and rechecked after a minute.
+const NONE_RECHECK_MS = 60 * 1000;
+const YOUNG_CHAT_STEPS = 3;
 function agentOf(id, st, model) {
-  if (!st.agent && id) {
-    try {
-      const { DatabaseSync } = require('node:sqlite');
-      const db = new DatabaseSync(CONVO_DB, { readOnly: true });
-      const row = db.prepare('select agent_name from conversation_summaries where conversation_id = ?').get(String(id));
-      db.close();
-      if (row) st.agent = row.agent_name || 'none';
-    } catch {}
-  }
-  if (!st.agent) return /argon/i.test(String(model || '')) ? 'firstmate' : '';
-  return st.agent !== 'none' ? st.agent : '';
+  if (st.agent === 'none' && Date.now() - (st.agentAt || 0) > NONE_RECHECK_MS) delete st.agent;
+  if (st.agent) return st.agent === 'none' ? '' : st.agent;
+  const argon = /argon/i.test(String(model || ''));
+  if (!id) return '';
+  let row;
+  try {
+    const { DatabaseSync } = require('node:sqlite');
+    const db = new DatabaseSync(CONVO_DB, { readOnly: true });
+    row = db.prepare('select agent_name, step_count from conversation_summaries where conversation_id = ?').get(String(id));
+    db.close();
+  } catch {}
+  if (!row) return argon ? 'firstmate' : '';
+  if (row.agent_name) { st.agent = row.agent_name; return st.agent; }
+  if (Number(row.step_count) <= YOUNG_CHAT_STEPS) return argon ? 'firstmate' : '';
+  st.agent = 'none'; st.agentAt = Date.now();
+  return '';
 }
 
 module.exports = { STATE_DIR, PLUGIN_DIR, DIRECT_MAX, unwrap, loadState, saveState, agentOf, lastUserStep, resetBudget, spendBudget, budgetUsed, budgetLog };

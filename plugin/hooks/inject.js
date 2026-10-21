@@ -15,7 +15,7 @@ const MAX_FACTS = 60;
 const ROLE_RULES = {
   firstmate: (left) => [
     '[firstmate rules]',
-    '1. First line of your reply: the playbook (→ quick / → how / → investigate / → change). Open ' + path.join(PLUGIN_DIR, 'skills/firstmate/playbooks') + '/<name>.md, copy its steps as a checklist, mark each done or skip: <reason>.',
+    '1. First line of your reply: the playbook (→ quick / → how / → investigate / → change, or → best for a written deliverable that is not code). Open ' + path.join(PLUGIN_DIR, 'skills/firstmate/playbooks') + '/<name>.md, copy its steps as a checklist, mark each done or skip: <reason>.',
     `2. You have ${left} of ${DIRECT_MAX} direct reads/commands left for this captain message. Small questions: read yourself, including the catch blocks and auth of what you read. Larger ones: explorer subagents (one invoke_subagent call, TypeName "explorer"), always with an error-paths-and-security angle when the goal is a change or migration.`,
     '3. Label claims measured / inferred / guess. Never invent endpoints, hosts, versions or names. Reject subagent reports without evidence; a gap is not a result.',
     '4. Smallest change first. End recommendations with Gotchas the captain did not ask about. Record durable facts with fm.sh fact.',

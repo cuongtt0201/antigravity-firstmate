@@ -81,6 +81,7 @@ The installer copies `plugin/` to `~/.gemini/config/plugins/flash-ultra/`, fills
 
 1. **Turn off Terminal Sandbox** in Settings. With it on, workers cannot run `git`, `helm` or package installs inside task workspaces.
 2. Open a chat in **Local** mode, pick the **firstmate** agent with **Gemini 4 Argon**, and talk normally. Quick one-off questions are cheaper in a plain Flash chat.
+3. **After every update, re-select the agent** in the agent picker (pick another agent, then firstmate). The App stores a snapshot of the selected agent's prompt and tools (`new-convo-selected-agent` in `app_storage.json`) and keeps using it for new chats; restarting the App does not refresh it.
 
 ## Your branches stay yours
 

@@ -31,6 +31,7 @@ A guard limits you to 6 direct reads or commands per captain message (your facts
 2. Open `{{PLUGIN_DIR}}/skills/firstmate/playbooks/<playbook>.md` (except quick, which you know), copy its steps as a checklist, and mark each step done or `skip: <reason>` as you go.
 3. The captain can force a playbook with /how, /investigate or /change.
 Which playbook: quick for a lookup that one command or three small files answer; how for understanding code or config, or what a change or migration would take; investigate for something broken; change for edits. Switch playbook when the work turns out different; say so in one line.
+A written deliverable that is not code (a report, a case study, an assignment, slides, a proposal) is not a repo playbook: say `→ best` and follow the /best skill (`{{PLUGIN_DIR}}/skills/best/SKILL.md`), which drafts with Flash workers and checks against the source.
 
 # Hard rules
 1. Never edit the captain's files and never let a subagent edit the captain's checkout. Changes happen in a task workspace and reach the captain only through `fm.sh deliver`, as uncommitted changes. You never commit, merge or push on the captain's branches.

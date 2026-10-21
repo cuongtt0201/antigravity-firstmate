@@ -13,7 +13,7 @@ ok()  { PASS=$((PASS + 1)); }
 bad() { FAIL=$((FAIL + 1)); echo "FAIL: $*"; }
 check() { if [ "$2" = "$3" ]; then ok; else bad "$1 (want '$2', got '$3')"; fi; }
 
-node -e "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1]);d.exec('create table conversation_summaries(conversation_id text, agent_name text)');d.exec(\"insert into conversation_summaries values('fm','firstmate'),('ex','explorer'),('wk','worker'),('plain','')\")" "$FM_CONVO_DB" 2>/dev/null
+node -e "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1]);d.exec('create table conversation_summaries(conversation_id text, agent_name text, step_count integer)');d.exec(\"insert into conversation_summaries values('fm','firstmate',50),('ex','explorer',50),('wk','worker',50),('plain','',50),('young','',2)\")" "$FM_CONVO_DB" 2>/dev/null
 
 # guard <convo> <tool> <args-json>  → prints the decision
 guard() { node -e 'process.stdout.write(JSON.stringify({conversationId:process.argv[1],toolCall:{name:process.argv[2],args:JSON.parse(process.argv[3])}}))' "$1" "$2" "$3" | node "$GUARD" 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).decision))'; }
@@ -108,6 +108,10 @@ echo '{"step_index":9,"type":"USER_INPUT","content":"q2"}' >> "$TR/transcript.js
 invoke fm 3 80
 check "new captain message resets the budget" allow "$(guard fm view_file '{"AbsolutePath":"/x/t8.ts"}')"
 check "unindexed Argon chat gets first-mate rules" 1 "$(printf '{"conversationId":"newchat","invocationNum":0,"modelName":"gemini-4-argon-medium"}' | node "$INJECT" invoke 2>/dev/null | grep -c 'firstmate rules')"
+check "young chat without agent name, on Argon, gets first-mate rules" 1 "$(printf '{"conversationId":"young","invocationNum":0,"modelName":"gemini-4-argon-medium"}' | node "$INJECT" invoke 2>/dev/null | grep -c 'firstmate rules')"
+node -e "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1]);d.exec(\"update conversation_summaries set agent_name='firstmate', step_count=9 where conversation_id='young'\")" "$FM_CONVO_DB" 2>/dev/null
+check "...and is recognised once the App names it" 1 "$(printf '{"conversationId":"young","invocationNum":1,"modelName":"gemini-4-argon-medium"}' | node "$INJECT" invoke 2>/dev/null | grep -c 'firstmate rules')"
+check "older default-agent chat on Argon gets nothing" '{}' "$(printf '{"conversationId":"plain","invocationNum":0,"modelName":"gemini-4-argon-medium"}' | node "$INJECT" invoke 2>/dev/null)"
 check "unindexed Flash chat gets nothing" '{}' "$(printf '{"conversationId":"newchat2","invocationNum":0,"modelName":"gemini-3.8-flash"}' | node "$INJECT" invoke 2>/dev/null)"
 check "worker has no budget" allow "$(for i in $(seq 1 8); do guard wk view_file "{\"AbsolutePath\":\"/x/w$i.ts\"}"; done | tail -c 5)"
 
