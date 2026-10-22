@@ -1,11 +1,11 @@
 {
   "name": "flash-ultra",
   "displayName": "Firstmate Crew",
-  "version": "0.10.0-dev",
+  "version": "0.10.0-beta.1",
   "description": "Argon routes each request to a playbook (quick, how, investigate, change) and judges; Flash explorers read with file:line evidence, Flash workers edit in the model's own task workspaces, a Flash checker verifies, and code gates every change before it reaches you as uncommitted edits. Blocks agents from applying, deleting or pushing.",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
-    "Pod prod-core-insurance cứ restart, check giúp nguyên nhân",
+    "Pod api-gateway trên prod cứ restart, check giúp nguyên nhân",
     "/change Thêm alert rule khi pod restart quá 3 lần trong 10 phút",
     "Luồng xử lý của service này chạy như thế nào?"
   ]

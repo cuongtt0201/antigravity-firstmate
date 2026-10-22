@@ -63,7 +63,7 @@ The sequence of a change, the workspace model and the full guard table are in [d
 
 ## Install
 
-Requires the Antigravity **App** (the IDE has no subagents), Node.js 18+, `git` and `bash`. `helm`, `terraform`/`terragrunt` and `ruby` (for YAML and helmfile checks) are used when present.
+Requires the Antigravity **App** (the IDE has no subagents), Node.js 22.13+ (the hooks use `node:sqlite`), `git` and `bash`. `helm`, `terraform`/`terragrunt` and `ruby` (for YAML and helmfile checks) are used when present.
 
 ```bash
 npx -y github:cuongtt0201/antigravity-firstmate
