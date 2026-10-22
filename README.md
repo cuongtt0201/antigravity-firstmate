@@ -122,7 +122,7 @@ It reads command text, so it is a safety net, not a sandbox.
 | `rules/AGENTS.md` | Always on: calm tone, no invented facts, never change live systems |
 | `hooks/guard.js` | The guard described above, including the first mate's read budget |
 | `hooks/inject.js` | Injects `.firstmate/facts.md` when a chat starts, and each role's short rules before every model turn |
-| `scripts/fm.sh` | The model's workspace: `init`, `fact`, `start`, `save`, `gate`, `deliver`, `status`, `clean` |
+| `scripts/fm.sh` | The model's workspace: `init`, `fact`, `start`, `save`, `gate`, `deliver`, `status`, `clean`; `shape` counts /best deliverables against their word limits |
 | `scripts/fm-checks.sh`, `scripts/fm-helmfile.rb` | Automatic checks picked from the changed files, including `helm template` for helmfile releases with local charts |
 
 ## Early results

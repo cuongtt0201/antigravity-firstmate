@@ -48,7 +48,7 @@ flowchart TB
 | Explorer (`agents/explorer.md`) | Gemini Flash | Nothing | Read code, config and command output for one angle; report findings with `file:line` evidence and measured/inferred/guess labels |
 | Worker (`agents/worker.md`) | Gemini Flash | Only its task workspace | Make one change; report the check it ran and the evidence |
 | Checker (`agents/checker.md`) | Gemini Flash | Nothing | Compare a change with the original request; for code, run tests and adversarial inputs; for config, list impact and unknown keys |
-| `scripts/fm.sh` | n/a | Task worktrees and `refs/firstmate/*` | The model's own workspace: init, start, save, gate, deliver, status, clean |
+| `scripts/fm.sh` | n/a | Task worktrees and `refs/firstmate/*` | The model's own workspace: init, start, save, gate, deliver, status, clean; shape (word limits for /best) |
 | `hooks/guard.js` | n/a | n/a | PreToolUse hook on every tool call (see Safety), including the first mate's direct-read budget |
 | `hooks/inject.js` | n/a | n/a | SessionStart: injects `.firstmate/facts.md`. PreInvocation: injects each role's short rules before every model turn |
 

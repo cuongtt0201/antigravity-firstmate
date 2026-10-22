@@ -8,6 +8,7 @@
 #   fm.sh deliver <repo> <task> [--keep]     apply the task diff to the captain's checkout, uncommitted
 #   fm.sh status  <repo>
 #   fm.sh clean   <repo> <task|--all>
+#   fm.sh shape   <brief.md> [--sections]   word counts of a /best brief's deliverables and drafts vs their limits
 # Tasks live in refs/firstmate/<task>/{base,head}, never in refs/heads, so `git branch` and pushes never see them.
 set -euo pipefail
 # sandboxed agents may not read ~/.gitconfig; fall back to no global config
@@ -17,7 +18,7 @@ ID=(-c user.name=firstmate -c user.email=firstmate@local)
 PROTECTED_RE='^(main|master|prod|production|prod-.*|release/.*)$'
 
 die() { echo "[fm] ERROR: $*" >&2; exit 2; }
-[ $# -ge 2 ] || die "usage: fm.sh <init|fact|start|save|gate|deliver|status|clean> <repo> [args]"
+[ $# -ge 2 ] || die "usage: fm.sh <init|fact|start|save|gate|deliver|status|clean> <repo> [args] | fm.sh shape <brief.md> [--sections]"
 CMD=$1; REPO_ARG=$2; shift 2
 
 # main checkout of the repo containing $1 (works when given a task workspace path too)
@@ -37,6 +38,51 @@ need_repo() { R=$(main_checkout "$REPO_ARG") || die "'$REPO_ARG' is not a git re
 exclude_file() { echo "$(cd "$1" && cd "$(git rev-parse --git-common-dir)" && pwd)/info/exclude"; }
 
 case "$CMD" in
+shape)
+  # The brief declares one line per deliverable, paths relative to the brief's folder:
+  #   deliverable: final.md words=2500 covers=R1-R10 drafts=draft_*.md
+  # A word is a space-separated token with a letter or digit, so markdown symbols (#, |, ---) do not
+  # count; for Vietnamese this counts syllables, like Word. OVER (exit 1) = more than 10% over the limit.
+  BRIEF=$REPO_ARG; [ -f "$BRIEF" ] || die "no brief at '$BRIEF'"
+  DIR=$(cd "$(dirname "$BRIEF")" && pwd); SECTIONS=${1:-}
+  COUNT='function cnt(  i, c) { c = 0; for (i = 1; i <= NF; i++) if ($i ~ /[A-Za-z0-9]/ || $i ~ /[\200-\377]/) c++; return c }'
+  words() { LC_ALL=C awk "$COUNT"' { n += cnt() } END { print n + 0 }' "$1"; }
+  sections() {
+    LC_ALL=C awk "$COUNT"'
+      /^#/ { if (seen) printf "      %5d  %s\n", n, h; h = $0; n = 0; seen = 1 }
+      { if (!seen) { seen = 1; h = "(before the first heading)"; n = 0 }; n += cnt() }
+      END { if (seen) printf "      %5d  %s\n", n, h }' "$1"
+  }
+  DLINE='^[[:space:]]*([-*][[:space:]]+)?deliverable:'
+  grep -qE "$DLINE" "$BRIEF" || die "no 'deliverable:' lines in $BRIEF (one per deliverable: deliverable: final.md words=2500 covers=R1-R10 drafts=draft_*.md)"
+  FOUND=0; OVER=0
+  report() {
+    local f=$1 lim=$2 n st
+    if [ ! -f "$f" ]; then echo "  -      ${f#"$DIR"/}: not written yet"; return 0; fi
+    n=$(words "$f")
+    if [ "$n" -gt $((lim + lim / 10)) ]; then st=OVER; OVER=1; elif [ "$n" -lt $((lim * 8 / 10)) ]; then st=SHORT; else st=OK; fi
+    printf '  %-6s %s: %d / %d words (%+d%%)\n' "$st" "${f#"$DIR"/}" "$n" "$lim" $(((n - lim) * 100 / lim))
+    if [ "$SECTIONS" = --sections ]; then sections "$f"; fi
+  }
+  echo "[fm] shape: words per file (markdown symbols not counted) vs the brief's limits; OVER = more than 10% over"
+  while IFS= read -r line; do
+    spec=${line#*deliverable:}
+    p=$(awk '{print $1}' <<< "$spec")
+    lim=$(sed -n 's/.*words=\([0-9][0-9.,]*\).*/\1/p' <<< "$spec" | tr -d '.,')
+    dr=$(sed -n 's/.*drafts=\([^ |`]*\).*/\1/p' <<< "$spec")
+    if [ -z "$p" ] || [ -z "$lim" ] || [ "$lim" = 0 ]; then echo "  ?      cannot read: $line"; continue; fi
+    FOUND=$((FOUND + 1))
+    case "$p" in /*) ;; *) p="$DIR/$p" ;; esac
+    report "$p" "$lim"
+    if [ -n "$dr" ]; then
+      for f in "$DIR"/$dr; do [ -f "$f" ] && report "$f" "$lim"; done
+    fi
+  done < <(grep -E "$DLINE" "$BRIEF")
+  [ "$FOUND" -gt 0 ] || die "no readable 'deliverable:' line in $BRIEF (it needs a file name and words=<limit>)"
+  if [ "$OVER" = 1 ]; then echo "[fm] shape: OVER"; exit 1; fi
+  echo "[fm] shape: OK"
+  ;;
+
 init)
   NEW=0
   if ! git -C "$REPO_ARG" rev-parse --git-dir >/dev/null 2>&1; then

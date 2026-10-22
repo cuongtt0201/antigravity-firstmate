@@ -149,6 +149,28 @@ check "facts injected for a percent-encoded path" 1 "$(grep -c 'Uses Fastify 5' 
 RULES=$(printf '{"conversationId":"ex","invocationNum":0,"initialNumSteps":1}' | node "$INJECT" invoke 2>/dev/null)
 check "explorer gets its rules" 1 "$(grep -c 'explorer rules' <<< "$RULES")"
 check "default agent gets nothing" '{}' "$(printf '{"conversationId":"plain","invocationNum":0}' | node "$INJECT" invoke 2>/dev/null)"
+mkdir -p "$T/no repo"
+SESSION=$(printf '{"conversationId":"fm","workspacePaths":["file://%s"]}' "$(sed 's/ /%20/g' <<< "$T/no repo")" | node "$INJECT" session 2>/dev/null)
+check "a folder that is not a repo is reported as having no facts" 1 "$(grep -c 'not a git repo' <<< "$SESSION")"
+RULES=$(printf '{"conversationId":"fm","invocationNum":0,"initialNumSteps":1}' | node "$INJECT" invoke 2>/dev/null)
+check "first mate may pass skills: none" 1 "$(grep -c 'skills: none' <<< "$RULES")"
+check "first mate is not told to pass its own playbooks as skills" 0 "$(grep -c 'written deliverables → best' "$P/agents/firstmate.md")"
+
+echo "== fm.sh shape"
+B="$T/task one/best"; mkdir -p "$B"
+printf 'Brief\n```\ndeliverable: final.md words=20 covers=R1-R2 drafts=draft_*.md\n- deliverable: talk.md words=1.000 covers=R3\n```\n' > "$B/brief.md"
+printf '# Kế hoạch\n| --- | --- |\nmột hai ba bốn năm sáu bảy tám chín mười\n## Phần 2\n**Đơn** vị - 2.500 từ\n' > "$B/draft_1.md"
+seq 1 30 | tr '\n' ' ' > "$B/draft_2.md"
+SHAPE=$(bash "$FM" shape "$B/brief.md" --sections); RC=$?
+check "shape: a draft over the limit exits 1" 1 "$RC"
+check "shape: markdown symbols are not words, Vietnamese syllables are" 1 "$(grep -c 'OK     draft_1.md: 18 / 20 words' <<< "$SHAPE")"
+check "shape: over by more than 10%" 1 "$(grep -c 'OVER   draft_2.md: 30 / 20' <<< "$SHAPE")"
+check "shape: unwritten deliverables are listed" 2 "$(grep -c 'not written yet' <<< "$SHAPE")"
+check "shape: limits with a thousands separator" 1 "$(grep -c 'talk.md' <<< "$SHAPE")"
+check "shape: words per section" 1 "$(grep -cE '^ +6  ## Phần 2$' <<< "$SHAPE")"
+rm "$B/draft_2.md"
+bash "$FM" shape "$B/brief.md" >/dev/null; check "shape: all within limits exits 0" 0 $?
+printf 'no lines\n' > "$B/empty.md"; bash "$FM" shape "$B/empty.md" >/dev/null 2>&1; check "shape: a brief without deliverable lines is an error" 2 $?
 
 echo "== fm.sh workspace"
 R="$T/repo"; mkdir -p "$R/hf" "$R/plain/templates" "$R/svc/node_modules/pkg" "$R/docs dir"

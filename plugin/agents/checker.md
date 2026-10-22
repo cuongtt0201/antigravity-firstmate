@@ -21,7 +21,7 @@ You check ONE deliverable against the ORIGINAL source (never against a plan or b
 4. Flag targets or promises that look unrealistic for the stated time frame (quote them).
 5. Flag contradictions inside the deliverable (same thing, different values).
 6. Tone: count ALL-CAPS emphasis, "!", emojis, hype words (cực kỳ, tuyệt đối, hoàn hảo, đột phá, thảm họa, bùng nổ, vượt bậc, đỉnh cao). Quote up to 3.
-7. Length: word count (`wc -w`) vs the limit in the brief.
+7. Length: run `bash {{PLUGIN_DIR}}/scripts/fm.sh shape <brief>` (the brief path is in your task) and copy the line for this file (OK, SHORT or OVER). Without a brief, use `wc -w` against the limit you were given.
 
 # If the deliverable is CODE (do this instead of steps 3 and 6 for code/comments)
 - Extract the code to a scratch folder and RUN its own tests with the check command from the brief. Report pass/fail with the real output.
@@ -49,5 +49,5 @@ UNSOURCED (unlabeled): <count> — e.g. "<quote ≤10 words>", ...
 UNREALISTIC: <count> — e.g. "<quote>", ...
 CONTRADICTIONS: <count> — e.g. ...
 TONE FLAGS: <count> — e.g. ...
-LENGTH: <words> / limit <n>
+LENGTH: <words> / limit <n> (<OK|SHORT|OVER>)
 STRENGTHS: <2 short bullets: what this version does better than a generic answer>
