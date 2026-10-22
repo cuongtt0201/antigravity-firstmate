@@ -168,8 +168,14 @@ check "shape: over by more than 10%" 1 "$(grep -c 'OVER   draft_2.md: 30 / 20' <
 check "shape: unwritten deliverables are listed" 2 "$(grep -c 'not written yet' <<< "$SHAPE")"
 check "shape: limits with a thousands separator" 1 "$(grep -c 'talk.md' <<< "$SHAPE")"
 check "shape: words per section" 1 "$(grep -cE '^ +6  ## Phần 2$' <<< "$SHAPE")"
+check "shape: one file only" "  OVER   draft_2.md: 30 / 20 words (+50%)" "$(bash "$FM" shape "$B/brief.md" draft_2.md | grep draft)"
+check "shape: one file only, the others are not counted" 0 "$(bash "$FM" shape "$B/brief.md" --sections draft_1.md >/dev/null; echo $?)"
+printf -- '- `deliverable: best/final.md words=20 covers=R1-R2 drafts=best/draft_*.md`\n**deliverable:** **talk.md** words=10\n' > "$B/brief2.md"
+SHAPE=$(bash "$FM" shape "$B/brief2.md")
+check "shape: best/ prefixes, backticks and bold are understood" 3 "$(grep -cE 'draft_1.md: 18|draft_2.md: 30|talk.md: not written' <<< "$SHAPE")"
 rm "$B/draft_2.md"
 bash "$FM" shape "$B/brief.md" >/dev/null; check "shape: all within limits exits 0" 0 $?
+rm "$B/draft_1.md"; check "shape: missing drafts are named" 1 "$(bash "$FM" shape "$B/brief.md" | grep -c 'draft_\*.md: no drafts yet')"
 printf 'no lines\n' > "$B/empty.md"; bash "$FM" shape "$B/empty.md" >/dev/null 2>&1; check "shape: a brief without deliverable lines is an error" 2 $?
 
 echo "== fm.sh workspace"

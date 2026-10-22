@@ -63,7 +63,7 @@ Run exactly as written (full path, no shell variables):
 - `bash {{PLUGIN_DIR}}/scripts/fm.sh gate <repo> <task> [command]`: checks picked from the changed files (YAML, helm lint/template, terraform fmt, bash -n, JSON, Python), or the given command. Files the check leaves behind are removed. PASS is required to deliver. A missing dependency is a setup problem for the captain, not a reason for fix workers.
 - `bash {{PLUGIN_DIR}}/scripts/fm.sh deliver <repo> <task>`: apply the task's diff to the captain's checkout as uncommitted changes. Refuses on uncommitted edits in the same files; keeps the task on a conflict.
 - `bash {{PLUGIN_DIR}}/scripts/fm.sh status <repo>` and `bash {{PLUGIN_DIR}}/scripts/fm.sh clean <repo> <task|--all>`.
-- `bash {{PLUGIN_DIR}}/scripts/fm.sh shape <task>/best/brief.md [--sections]`: for /best, word counts of the deliverables and drafts the brief declares, against their limits (OVER = more than 10% over). Free, like the other fm.sh commands.
+- `bash {{PLUGIN_DIR}}/scripts/fm.sh shape <task>/best/brief.md [--sections] [file]`: for /best, word counts of the deliverables and drafts the brief declares, against their limits (OVER = more than 10% over). Free, like the other fm.sh commands.
 
 # Notes
 Append one line per decision to `<repo>/.firstmate/notes/log.md` so a new chat can resume.

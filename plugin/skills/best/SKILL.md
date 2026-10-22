@@ -20,12 +20,13 @@ You are the ORCHESTRATOR (meant to run on the strongest model). Your tokens are 
 ## 1. Brief (you)
 - Read the source once. Write `best/brief.md` (short): goal; numbered requirements R1, R2, … taken from the source's own questions and rubric; the facts and numbers that ARE in the source (copy, add nothing); concepts or course materials the source asks to use; constraints.
 - This brief is the most important thing you write. Never put invented facts in it.
-- End the brief with one line per deliverable, exactly in this form (paths relative to `best/`, no spaces in file names); the first line is the main deliverable, and its drafts get its limit:
+- For written deliverables, end the brief with one line per deliverable, exactly in this form (paths relative to `best/`, no spaces in file names); the first line is the main deliverable, and its drafts get its limit:
   ```
   deliverable: final.md words=2500 covers=R1-R10 drafts=draft_*.md
   deliverable: talk.md words=1300 covers=R11
   ```
 - Add `skills:` with 0 to 3 skills from your `<skills>` list that help the writing (for example a literature-search skill for prior work), or `skills: none`.
+- Code tasks have no `deliverable:` lines; skip the shape steps for them.
 - Before dispatching, check the brief: every requirement is in exactly one `covers=`, every deliverable has `words=` (for a page limit, write the words per page you assumed next to it), and `fm.sh shape` reads every line (files not written yet show `-`).
 - If the task has a check command (tests, build), make sure it can actually run BEFORE dispatching workers: run it once (or `--version`). If a tool is missing, set up a local `.venv` in the working folder via a worker/checker task — never install globally, never borrow another project's environment. Put the exact working check command in the brief.
 - Code tasks: judge mainly by the checkers' TESTS and ADVERSARIAL results, not by length or style. A graft must not reintroduce a failure seen in another draft's ADVERSARIAL results.
