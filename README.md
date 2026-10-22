@@ -10,6 +10,14 @@ Argon is strong but uses up its quota quickly. Flash is cheap, but left alone it
 - **Claims are labelled** measured, inferred or guess, nothing is invented, and every recommendation ends with the gotchas you did not ask about.
 - **You stay in charge of git and the live systems.** Changes arrive in your working tree as uncommitted edits; you commit, push and apply. A guard hook blocks agents from applying, deleting, scaling or pushing.
 
+> **Beta testers: install `v0.10.0-beta.1`, not the default.** The command below without a tag installs the stable v0.9.3.
+>
+> ```bash
+> npx -y github:cuongtt0201/antigravity-firstmate#v0.10.0-beta.1
+> ```
+>
+> Then restart the Antigravity App and **re-select the agent** (pick another agent in the agent picker, then **firstmate**); otherwise new chats keep the old prompt. Check the installed version with `grep '"version"' ~/.gemini/config/plugins/flash-ultra/plugin.json` (it should say `0.10.0-beta.1`). The beta needs Node.js 22.13+. What changed and how it works: [README on the dev branch](https://github.com/cuongtt0201/antigravity-firstmate/tree/dev#readme).
+
 ## How it works
 
 ```mermaid
