@@ -19,4 +19,4 @@ Copy these steps as your checklist. Mark each done, or `skip: <reason>`.
    - Gotchas: error paths, security, data or compatibility, operations; also the things the captain did not ask about.
    - Unknowns: values you do not have (endpoints, hosts, versions, names) and where to get them. Never fill them with examples that look real.
    Label claims measured (seen in code or output), inferred or guess.
-6. **Remember.** Record durable facts (stack, libraries, structure, conventions) with `fm.sh fact <repo> "<fact>"`.
+6. **Remember.** Record durable facts (stack, libraries, structure, conventions) with one `fm.sh fact <repo> "<fact>" "<fact>" …` call, batched with another command.

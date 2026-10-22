@@ -144,6 +144,8 @@ echo "== context hooks"
 mkdir -p "$T/my repo" && (cd "$T/my repo" && git init -q -b main && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m i)
 bash "$FM" init "$T/my repo" >/dev/null && bash "$FM" fact "$T/my repo" "Uses Fastify 5" >/dev/null
 check "fact dedupe" "already" "$(bash "$FM" fact "$T/my repo" "uses fastify 5" | grep -o already)"
+bash "$FM" fact "$T/my repo" "Uses Prisma" "uses fastify 5" "Deploys with PM2" >/dev/null
+check "several facts in one call, duplicates skipped" 3 "$(grep -c '^- ' "$T/my repo/.firstmate/facts.md")"
 SESSION=$(printf '{"conversationId":"fm","workspacePaths":["file://%s"]}' "$(sed 's/ /%20/g' <<< "$T/my repo")" | node "$INJECT" session 2>/dev/null)
 check "facts injected for a percent-encoded path" 1 "$(grep -c 'Uses Fastify 5' <<< "$SESSION")"
 RULES=$(printf '{"conversationId":"ex","invocationNum":0,"initialNumSteps":1}' | node "$INJECT" invoke 2>/dev/null)
@@ -201,6 +203,7 @@ bash "$FM" gate "$R" t1 'test -f svc/node_modules/pkg/index.js && grep -q SECRET
 check "gate with deps passes and leaves no junk" "" "$(git -C "$W" status --porcelain)"
 bash "$FM" deliver "$R" t1 >/dev/null 2>&1
 check "delivered uncommitted, spaces ok" 3 "$(git -C "$R" status --porcelain | wc -l | tr -d ' ')"
+check "delivery logged in notes" 1 "$(grep -c 'delivered task t1 to ft/x, uncommitted:' "$R/.firstmate/notes/log.md")"
 check "branches untouched" "ft/x main" "$(git -C "$R" branch --format='%(refname:short)' | sort | tr '\n' ' ' | sed 's/ $//')"
 git -C "$R" checkout -q -- .
 bash "$FM" start "$R" c1 >/dev/null; printf 'a\nTASK\nc\n' > "$R/.firstmate/wt/c1/conflict.txt"; bash "$FM" save "$R" c1 x >/dev/null; bash "$FM" gate "$R" c1 >/dev/null 2>&1

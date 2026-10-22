@@ -16,4 +16,4 @@ Copy these steps as your checklist. Mark each done, or `skip: <reason>`.
    - Why: 1 to 3 lines.
    - Fix: commands for the captain to run, or a proposed change (that needs a go and the change playbook).
    - Gotchas and unknowns.
-7. **Remember** durable facts with `fm.sh fact`.
+7. **Remember** durable facts with one `fm.sh fact` call (several facts at once), batched with another command.
