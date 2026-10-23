@@ -137,7 +137,7 @@ sequenceDiagram
 npx -y github:cuongtt0201/antigravity-firstmate
 ```
 
-To pin this release: `npx -y github:cuongtt0201/antigravity-firstmate#v0.10.2`.
+To pin this release: `npx -y github:cuongtt0201/antigravity-firstmate#v0.11.0`.
 
 The installer copies `plugin/` to `~/.gemini/config/plugins/flash-ultra/`, fills in the absolute paths for your machine, enables the plugin in `~/.gemini/config/config.json` (after backing it up) and makes the installed copy read-only, so agents cannot edit their own guardrails. Running it again updates the plugin; the previous copy is backed up to your temp folder.
 
