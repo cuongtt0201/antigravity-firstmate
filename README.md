@@ -137,13 +137,7 @@ sequenceDiagram
 npx -y github:cuongtt0201/antigravity-firstmate
 ```
 
-The command above installs the stable release from `main` (v0.9.3). **To install the beta described in this README:**
-
-```bash
-npx -y github:cuongtt0201/antigravity-firstmate#v0.10.0-beta.1
-```
-
-After installing, re-select the agent (see Setup, step 4) and check the version: `grep '"version"' ~/.gemini/config/plugins/flash-ultra/plugin.json` should print `0.10.0-beta.1`.
+To pin this release: `npx -y github:cuongtt0201/antigravity-firstmate#v0.10.0`.
 
 The installer copies `plugin/` to `~/.gemini/config/plugins/flash-ultra/`, fills in the absolute paths for your machine, enables the plugin in `~/.gemini/config/config.json` (after backing it up) and makes the installed copy read-only, so agents cannot edit their own guardrails. Running it again updates the plugin; the previous copy is backed up to your temp folder.
 
