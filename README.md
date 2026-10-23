@@ -206,7 +206,7 @@ Not published yet. A comparison of Flash-only, Argon-only and Firstmate on a fix
 
 ## Contributing
 
-Edit files under `plugin/`, run `npm test` (guard policy, budget, context hooks, `fm.js` workspace and `shape`; needs git, node and ruby), reinstall with `node install.js`, re-select the agent, and try the change in the App. Issues and PRs are welcome.
+Edit files under `plugin/`, run `npm test` (guard policy, budget, context hooks, `fm.js` workspace and `shape`; needs git, node and bash, which Git Bash provides on Windows), reinstall with `node install.js`, re-select the agent, and try the change in the App. Issues and PRs are welcome.
 
 ## License
 

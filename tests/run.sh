@@ -11,7 +11,7 @@ export FM_STATE_DIR="$T/state" FM_CONVO_DB="$T/convos.db" FM_BRAIN_DIR="$T/brain
 fm() { node "$FMJS" "$@"; }
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS + 1)); }
-bad() { FAIL=$((FAIL + 1)); echo "FAIL: $*"; }
+bad() { FAIL=$((FAIL + 1)); echo "FAIL: $*"; [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error title=test::$(printf %s "$*" | tr -d '\r' | head -c 300)"; return 0; }
 check() { if [ "$2" = "$3" ]; then ok; else bad "$1 (want '$2', got '$3')"; fi; }
 
 node -e "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1]);d.exec('create table conversation_summaries(conversation_id text, agent_name text, step_count integer)');d.exec(\"insert into conversation_summaries values('fm','firstmate',50),('ex','explorer',50),('wk','worker',50),('plain','',50),('young','',2)\")" "$FM_CONVO_DB" 2>/dev/null
