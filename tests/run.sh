@@ -178,13 +178,13 @@ fm init "$T/my repo" >/dev/null && fm fact "$T/my repo" "Uses Fastify 5" >/dev/n
 check "fact dedupe" "already" "$(fm fact "$T/my repo" "uses fastify 5" | grep -o already)"
 fm fact "$T/my repo" "Uses Prisma" "uses fastify 5" "Deploys with PM2" >/dev/null
 check "several facts in one call, duplicates skipped" 3 "$(grep -c '^- ' "$T/my repo/.firstmate/facts.md")"
-SESSION=$(printf '{"conversationId":"fm","workspacePaths":["file://${WIN:+/}%s"]}' "$(sed 's/ /%20/g' <<< "$T/my repo")" | node "$INJECT" session 2>/dev/null)
+SESSION=$(printf '{"conversationId":"fm","workspacePaths":["file://%s%s"]}' "${WIN:+/}" "$(sed 's/ /%20/g' <<< "$T/my repo")" | node "$INJECT" session 2>/dev/null)
 check "facts injected for a percent-encoded path" 1 "$(grep -c 'Uses Fastify 5' <<< "$SESSION")"
 RULES=$(printf '{"conversationId":"ex","invocationNum":0,"initialNumSteps":1}' | node "$INJECT" invoke 2>/dev/null)
 check "explorer gets its rules" 1 "$(grep -c 'explorer rules' <<< "$RULES")"
 check "default agent gets nothing" '{}' "$(printf '{"conversationId":"plain","invocationNum":0}' | node "$INJECT" invoke 2>/dev/null)"
 mkdir -p "$T/no repo"
-SESSION=$(printf '{"conversationId":"fm","workspacePaths":["file://${WIN:+/}%s"]}' "$(sed 's/ /%20/g' <<< "$T/no repo")" | node "$INJECT" session 2>/dev/null)
+SESSION=$(printf '{"conversationId":"fm","workspacePaths":["file://%s%s"]}' "${WIN:+/}" "$(sed 's/ /%20/g' <<< "$T/no repo")" | node "$INJECT" session 2>/dev/null)
 check "a folder that is not a repo is reported as having no facts" 1 "$(grep -c 'not a git repo' <<< "$SESSION")"
 RULES=$(printf '{"conversationId":"fm","invocationNum":0,"initialNumSteps":1}' | node "$INJECT" invoke 2>/dev/null)
 check "first mate may pass skills: none" 1 "$(grep -c 'skills: none' <<< "$RULES")"
