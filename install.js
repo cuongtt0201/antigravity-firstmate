@@ -55,12 +55,17 @@ function editConfig(fn) {
   fs.writeFileSync(CONFIG, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 });
 }
 
+const WIN = process.platform === 'win32';
+// Prefer a stable node path: process.execPath is often a versioned Cellar path that breaks on upgrade.
+// On Windows the installer puts node on PATH and the hooks call it as `node` (a quoted program path
+// does not start a command in PowerShell).
+function nodePath() {
+  if (WIN) return process.execPath;
+  return ['/opt/homebrew/bin/node', '/usr/local/bin/node', '/usr/bin/node'].find((p) => fs.existsSync(p)) || process.execPath;
+}
+
 function install() {
-  // Prefer a stable node path: process.execPath is often a versioned Cellar path that breaks on upgrade.
-  const node = ['/opt/homebrew/bin/node', '/usr/local/bin/node', '/usr/bin/node'].find((p) => fs.existsSync(p)) || process.execPath;
-  if (/\s/.test(TARGET) || /\s/.test(node)) {
-    throw new Error(`paths with spaces are not supported by the hook command: ${TARGET} / ${node}`);
-  }
+  const node = nodePath();
   // The hooks need node:sqlite (Node 22.13+). Without it they fail open and the guard would allow everything.
   try {
     require('child_process').execFileSync(node, ['-e', "require('node:sqlite')"], { stdio: 'ignore', timeout: 10000 });
@@ -78,11 +83,16 @@ function install() {
 
   fs.mkdirSync(PLUGINS_DIR, { recursive: true });
   fs.cpSync(SOURCE, TARGET, { recursive: true });
-  // Fill machine-specific paths into every manifest, agent and skill that mentions them.
+  // Fill machine-specific paths into every manifest, agent and skill that mentions them. Forward slashes
+  // on Windows too: node and git accept them, and they need no escaping in JSON or Markdown.
+  const dir = TARGET.split(path.sep).join('/');
   walk(TARGET, (f, isDir) => {
     if (isDir || !TEMPLATED_EXT.has(path.extname(f))) return;
-    const text = fs.readFileSync(f, 'utf8');
-    if (text.includes('{{')) fs.writeFileSync(f, text.replaceAll('{{PLUGIN_DIR}}', TARGET).replaceAll('{{NODE}}', node));
+    let text = fs.readFileSync(f, 'utf8');
+    if (!text.includes('{{')) return;
+    // Windows hook commands: plain `node` from PATH, and no `|| echo` fallback (Windows PowerShell 5.1 has no ||)
+    if (WIN && path.basename(f) === 'hooks.json') text = text.replaceAll('\\"{{NODE}}\\"', 'node').replace(/ \|\| echo '[^']*'/g, '');
+    fs.writeFileSync(f, text.replaceAll('{{PLUGIN_DIR}}', dir).replaceAll('{{NODE}}', node.split(path.sep).join('/')));
   });
   lock(TARGET);
 
@@ -103,27 +113,22 @@ function check() {
   const { spawnSync } = require('child_process');
   const win = process.platform === 'win32';
   const run = (cmd, args) => {
-    const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: 10000, shell: win });
+    const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: 10000 });
     return r.status === 0 ? String(r.stdout || r.stderr).trim().split('\n')[0] : null;
   };
-  const where = (cmd) => run(win ? 'where' : 'which', [cmd]);
   const rows = [];
   let missing = 0;
   const add = (state, what, detail) => { rows.push(`  ${state.padEnd(8)} ${what.padEnd(26)} ${detail || ''}`); if (state === 'MISSING') missing += 1; };
 
-  add(win ? 'NOTE' : 'OK', 'operating system', `${process.platform} ${os.release()}${win ? ' (Windows is not supported yet; this report says what a port needs)' : ''}`);
-  const nodeAt = win ? process.execPath : (['/opt/homebrew/bin/node', '/usr/local/bin/node', '/usr/bin/node'].find((p) => fs.existsSync(p)) || process.execPath);
+  add('OK', 'operating system', `${process.platform} ${os.release()}`);
+  const nodeAt = nodePath();
   const nodeVer = run(nodeAt, ['--version']);
   const sqlite = run(nodeAt, ['-e', "require('node:sqlite');console.log('ok')"]) === 'ok';
   add(sqlite ? 'OK' : 'MISSING', 'node with node:sqlite', `${nodeAt} ${nodeVer || '?'}${sqlite ? '' : ' (needs Node.js 22.13 or newer)'}`);
-  if (/\s/.test(nodeAt) || /\s/.test(TARGET)) add('MISSING', 'paths without spaces', `${nodeAt} / ${TARGET} (the hook command cannot quote them yet)`);
+  if (win) { const onPath = run('node', ['--version']); add(onPath ? 'OK' : 'MISSING', 'node on PATH', onPath || 'the hooks call `node`; add the Node.js folder to PATH'); }
   const git = run('git', ['--version']);
   add(git ? 'OK' : 'MISSING', 'git', git || 'install git');
-  const bash = run('bash', ['--version']);
-  add(bash ? 'OK' : 'MISSING', 'bash', bash ? `${bash} (${where('bash') || '?'})` : 'needed by fm.sh (on Windows: Git for Windows provides Git Bash)');
-  const ruby = run('ruby', ['--version']);
-  add(ruby ? 'OK' : 'OPTIONAL', 'ruby', ruby || 'YAML and helmfile checks are skipped without it');
-  for (const [cmd, args] of [['helm', ['version', '--short']], ['terraform', ['version']], ['docker', ['--version']]]) {
+  for (const [cmd, args] of [['helm', ['version', '--short']], ['terraform', ['version']], ['terragrunt', ['--version']], ['hadolint', ['--version']], [win ? 'python' : 'python3', ['--version']]]) {
     const v = run(cmd, args); add(v ? 'OK' : 'OPTIONAL', cmd, v || 'not found; its checks are skipped');
   }
   if (win) add('NOTE', 'terminal shell', `ComSpec=${process.env.ComSpec || '?'}; PowerShell ${run('powershell', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()']) || 'not found'}`);
@@ -157,7 +162,6 @@ function uninstall() {
 
 try {
   if (process.argv.includes('--check')) check();
-  else if (process.platform === 'win32') throw new Error('Windows is not supported yet. Run with --check and send the report to the maintainer.');
   else if (process.argv.includes('--uninstall')) uninstall();
   else install();
 } catch (e) {

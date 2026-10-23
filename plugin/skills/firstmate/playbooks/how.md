@@ -5,7 +5,7 @@ For questions about code or config: how something works, where it lives, what a 
 Copy these steps as your checklist. Mark each done, or `skip: <reason>`.
 
 1. **Goal.** Write the goal behind the question in one line (the question may be narrower than the goal). If the question is ambiguous, ask ONE question and stop.
-2. **Facts.** Read `<repo>/.firstmate/facts.md` (run `fm.sh init <repo>` once if it does not exist).
+2. **Facts.** Read `<repo>/.firstmate/facts.md` (run `fm.js init <repo>` once if it does not exist).
 3. **Read or explore.** Pick the scope:
    - small (one module, a handful of files, roughly 500 lines): read it yourself within your direct-read budget. Read the functions the goal touches in full, including their catch blocks, fallbacks and the auth or validation in front of them.
    - large, several modules, or your budget runs out: explorers, all in ONE invoke_subagent call (`TypeName: "explorer"`, `Workspace: "inherit"`), each with a distinct angle. Typical angles: entry points and routes; data, config and environment; build, deploy and runtime.
@@ -19,4 +19,4 @@ Copy these steps as your checklist. Mark each done, or `skip: <reason>`.
    - Gotchas: error paths, security, data or compatibility, operations; also the things the captain did not ask about.
    - Unknowns: values you do not have (endpoints, hosts, versions, names) and where to get them. Never fill them with examples that look real.
    Label claims measured (seen in code or output), inferred or guess.
-6. **Remember.** Record durable facts (stack, libraries, structure, conventions) with one `fm.sh fact <repo> "<fact>" "<fact>" …` call, batched with another command.
+6. **Remember.** Record durable facts (stack, libraries, structure, conventions) with one `fm.js fact <repo> "<fact>" "<fact>" …` call, batched with another command.

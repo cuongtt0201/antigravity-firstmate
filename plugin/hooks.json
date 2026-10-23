@@ -4,17 +4,17 @@
       {
         "matcher": "*",
         "hooks": [
-          { "type": "command", "command": "{{NODE}} {{PLUGIN_DIR}}/hooks/guard.js || echo '{\"decision\":\"allow\"}'", "timeout": 5 }
+          { "type": "command", "command": "\"{{NODE}}\" \"{{PLUGIN_DIR}}/hooks/guard.js\" || echo '{\"decision\":\"allow\"}'", "timeout": 5 }
         ]
       }
     ]
   },
   "flash-ultra-context": {
     "SessionStart": [
-      { "type": "command", "command": "{{NODE}} {{PLUGIN_DIR}}/hooks/inject.js session || echo '{}'", "timeout": 5 }
+      { "type": "command", "command": "\"{{NODE}}\" \"{{PLUGIN_DIR}}/hooks/inject.js\" session || echo '{}'", "timeout": 5 }
     ],
     "PreInvocation": [
-      { "type": "command", "command": "{{NODE}} {{PLUGIN_DIR}}/hooks/inject.js invoke || echo '{}'", "timeout": 5 }
+      { "type": "command", "command": "\"{{NODE}}\" \"{{PLUGIN_DIR}}/hooks/inject.js\" invoke || echo '{}'", "timeout": 5 }
     ]
   }
 }

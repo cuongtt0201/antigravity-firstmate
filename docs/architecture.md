@@ -23,7 +23,7 @@ flowchart TB
   subgraph repo["Your repo"]
     direction LR
     wt["Task workspaces<br/>.firstmate/wt/TASK<br/>refs/firstmate/TASK"]
-    gate["fm.sh gate<br/>helm template, lint,<br/>terraform fmt, tests"]
+    gate["fm.js gate<br/>helm template, lint,<br/>terraform fmt, tests"]
     tree[("Your working tree<br/>on your branch")]
   end
 
@@ -48,7 +48,7 @@ flowchart TB
 | Explorer (`agents/explorer.md`) | Gemini Flash | Nothing | Read code, config and command output for one angle; report findings with `file:line` evidence and measured/inferred/guess labels |
 | Worker (`agents/worker.md`) | Gemini Flash | Only its task workspace | Make one change; report the check it ran and the evidence |
 | Checker (`agents/checker.md`) | Gemini Flash | Nothing | Compare a change with the original request; for code, run tests and adversarial inputs; for config, list impact and unknown keys |
-| `scripts/fm.sh` | n/a | Task worktrees and `refs/firstmate/*` | The model's own workspace: init, start, save, gate, deliver, status, clean; shape (word limits for /best) |
+| `scripts/fm.js` | n/a | Task worktrees and `refs/firstmate/*` | The model's own workspace: init, start, save, gate, deliver, status, clean; shape (word limits for /best) |
 | `hooks/guard.js` | n/a | n/a | PreToolUse hook on every tool call (see Safety), including the first mate's direct-read budget |
 | `hooks/inject.js` | n/a | n/a | SessionStart: injects `.firstmate/facts.md`. PreInvocation: injects each role's short rules before every model turn |
 
@@ -61,7 +61,7 @@ The first mate routes each message to a playbook (in `skills/firstmate/playbooks
 | **quick** | "dig crm-beta.globalcare.vn", "lệnh nào để kéo file từ bucket" | One command or up to three small reads by the first mate; a short answer with the why. |
 | **how** | "source này upload lên bucket ở đâu", "chuyển sang provider khác cần sửa gì" | Goal in one line → facts → small scope: the first mate reads it itself, including catch blocks and auth; large scope: 2 to 4 explorers in parallel, always with an error-paths-and-security angle for changes and migrations → overview, how it works with `file:line`, smallest change, gotchas, unknowns. |
 | **investigate** | "pod prod-core-insurance bị gì", "sao pipeline không trigger" | Symptom → hypotheses → one explorer per hypothesis (CONFIRMED / KILLED / OPEN) → cause, evidence, fix commands for you. Remote hosts and prod shells: you run the commands and paste the output. |
-| **change** | "tăng retention tempo", "thêm alert rule", "sửa .gitlab-ci.yml" | Plan (smallest change, risk) → your go → worker edits a task workspace → `fm.sh gate` → checker → delivered to your working tree, uncommitted. |
+| **change** | "tăng retention tempo", "thêm alert rule", "sửa .gitlab-ci.yml" | Plan (smallest change, risk) → your go → worker edits a task workspace → `fm.js gate` → checker → delivered to your working tree, uncommitted. |
 
 Each role answers in a fixed format (EXPLORER REPORT, WORKER REPORT, checker VERDICT). The first mate rejects a report that lacks the evidence its format asks for, respawns once, and then lists the gap; a gap is never presented as a result.
 
@@ -72,7 +72,7 @@ sequenceDiagram
   actor C as You
   participant F as First mate (Argon)
   participant W as Worker (Flash)
-  participant S as fm.sh
+  participant S as fm.js
   C->>F: "thêm alert khi pod restart > 3"
   F->>S: init (facts, branch, uncommitted files)
   F-->>C: → change. Plan: files, check, risk. Go?
@@ -98,7 +98,7 @@ gitGraph
 ```
 
 - A task is a **detached worktree** in `<repo>/.firstmate/wt/<task>`. Its commits are kept in `refs/firstmate/<task>/{base,head}`, not in `refs/heads`, so `git branch` never shows them and `git push` never sends them.
-- `.firstmate/` is hidden through `.git/info/exclude`, which exists only on your machine. The shared `.gitignore` is never touched, and `fm.sh` never commits in an existing repo.
+- `.firstmate/` is hidden through `.git/info/exclude`, which exists only on your machine. The shared `.gitignore` is never touched, and `fm.js` never commits in an existing repo.
 - `deliver` applies the task's diff to your working tree as **uncommitted** changes. It refuses if you have uncommitted edits in the same files, and uses a 3-way apply if your branch moved since the task started. You review `git diff`, then commit, push and open the MR as usual. Your history contains only your commits.
 - Git-ignored `node_modules`, `.venv`, `vendor` and `.env` files are linked into each task workspace from your checkout, so builds and tests run; the links are excluded by exact path and never saved. Files a check leaves behind are removed after the gate.
 - If your branch moved and the 3-way apply conflicts, the files are left with conflict markers and the task is kept; if the diff cannot be applied at all, nothing is changed and the task is kept.

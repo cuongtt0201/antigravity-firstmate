@@ -39,7 +39,7 @@ flowchart TB
   subgraph repo["Your repo"]
     direction LR
     wt["Task workspaces<br/>.firstmate/wt/TASK<br/>refs/firstmate/TASK"]
-    gate["fm.sh gate<br/>helm, lint, fmt, tests"]
+    gate["fm.js gate<br/>helm, lint, fmt, tests"]
     tree[("Your working tree<br/>on your branch")]
   end
 
@@ -69,7 +69,7 @@ flowchart TB
 | Checker (`agents/checker.md`) | Gemini Flash | Nothing | Compare the result with your original request; tests and adversarial inputs for code, impact for config, a scorecard for documents |
 | `hooks/guard.js` | n/a | n/a | Safety policy and the first mate's budget, on every tool call |
 | `hooks/inject.js` | n/a | n/a | Facts at chat start, each role's rules before every model turn |
-| `scripts/fm.sh` | n/a | Task worktrees | The model's own workspace and the gates |
+| `scripts/fm.js` | n/a | Task worktrees | The model's own workspace and the gates |
 
 ## How a request flows
 
@@ -77,7 +77,7 @@ flowchart TB
 2. **Read.** Small questions: the first mate reads a few files itself. Larger ones: explorers read in parallel, one angle each, and always one angle on error paths and security when the goal is a change.
 3. **Plan and wait.** For a change, the first mate proposes the smallest change that reaches the goal and stops until you say go.
 4. **Work in its own space.** Workers edit a detached worktree, never your checkout.
-5. **Gate.** `fm.sh gate` runs the checks that match the changed files. A failure goes back to the same worker, at most twice.
+5. **Gate.** `fm.js gate` runs the checks that match the changed files. A failure goes back to the same worker, at most twice.
 6. **Verify.** A checker compares the result with your original words, not with the plan.
 7. **Deliver.** The diff lands in your working tree, uncommitted, with the gate output, the checker's verdict and the commands you run next.
 
@@ -87,7 +87,7 @@ sequenceDiagram
   participant F as First mate (Argon)
   participant E as Explorers (Flash)
   participant W as Worker (Flash)
-  participant S as fm.sh
+  participant S as fm.js
   participant K as Checker (Flash)
   C->>F: "add an alert when a pod restarts 3 times in 10 min"
   F->>E: how does alerting work here? (+ error paths angle)
@@ -120,16 +120,16 @@ sequenceDiagram
 1. **Clarify** the deliverables, format, language, length and rubric with one question.
 2. **Brief** with numbered requirements copied from the source and one `deliverable:` line per output (`deliverable: final.md words=2500 covers=R1-R10 drafts=draft_*.md`).
 3. **Draft** three versions in parallel, each from a different angle taken from the source. Workers write one section at a time and measure as they go.
-4. **Shape gate.** `fm.sh shape` counts words per file against the brief's limits; a draft more than 10% over cannot win.
+4. **Shape gate.** `fm.js shape` counts words per file against the brief's limits; a draft more than 10% over cannot win.
 5. **Check and judge.** A checker scores each draft against the source; the first mate decides in a fixed order (length, unsourced facts, coverage, tone, strengths) and records each decision as `kept | revised | dropped -> what -> evidence`.
 6. **Rewrite** the final from scratch, then the remaining deliverables from the final, and check again.
 
 ## Requirements
 
 - The Antigravity **App** (the IDE has no subagents), with **Gemini 4 Argon** for the main agent.
-- macOS or Linux, `bash`, `git`.
+- macOS, Linux or Windows, and `git`. Everything else is Node: no bash or ruby needed.
 - **Node.js 22.13 or newer.** The hooks use `node:sqlite`; the installer refuses an older Node, because hooks that cannot run would let everything through.
-- Optional, used when present: `ruby` (YAML and helmfile checks), `helm`, `helmfile`, `terraform` / `terragrunt`.
+- Optional, used when present: `helm`, `terraform` / `terragrunt`, `hadolint`, `python3`.
 
 ## Install
 
@@ -172,9 +172,9 @@ The guard hook runs on every tool call while the plugin is enabled:
 - **Denied, you run it:** every `kubectl` command that is not on the read list (apply, patch, delete, scale, rollout restart, exec, port-forward, cp, config use-context…), `helm install/upgrade/uninstall`, `helmfile apply/sync`, `terraform/terragrunt apply/destroy/import/state rm`, `gcloud … create/delete/update`, writes to `gs://`, `git push`.
 - **Asks you first:** `ssh`, `scp`.
 - **MCP tools:** reads (get, list, read, search, describe, … and `*_read_only`) run; anything else asks you first; explorers cannot call it at all.
-- **Budget:** each direct read or command by the first mate counts 1, however it is written (its facts, notes, playbooks and `fm.sh` are free). After 6 it is told to send explorers; at 15 it is stopped.
+- **Budget:** each direct read or command by the first mate counts 1, however it is written (its facts, notes, playbooks and `fm.js` are free). After 6 it is told to send explorers; at 15 it is stopped.
 - **One worker per task workspace:** parallel workers sent into the same `.firstmate/wt/<task>` are refused.
-- **No surprise repos:** `fm.sh init` refuses a folder that is not a git repo until you agree (`--new-repo`).
+- **No surprise repos:** `fm.js init` refuses a folder that is not a git repo until you agree (`--new-repo`).
 - **Also:** explorers cannot write, workers and checkers are pinned to Flash, at most 12 subagents per chat per day, repeated reads of an unchanged file are stopped, and agents cannot edit the plugin.
 
 The guard reads command text, so it is a safety net, not a sandbox.
@@ -188,8 +188,8 @@ The guard reads command text, so it is a safety net, not a sandbox.
 | `skills/how`, `skills/investigate`, `skills/change`, `skills/best` | The commands that force a playbook; `/best` holds the drafting process |
 | `rules/AGENTS.md` | Always on: calm tone, no invented facts, never change live systems |
 | `hooks/guard.js`, `hooks/inject.js`, `hooks/lib.js` | Safety policy and budget; facts and role rules |
-| `scripts/fm.sh` | `init`, `fact`, `start`, `save`, `gate`, `deliver`, `status`, `clean`, and `shape` for word limits |
-| `scripts/fm-checks.sh`, `scripts/fm-helmfile.rb` | Checks picked from the changed files, including `helm template` for helmfile releases |
+| `scripts/fm.js` | `init`, `fact`, `start`, `save`, `gate`, `deliver`, `status`, `clean`, and `shape` for word limits |
+| `scripts/fm-checks.js`, `scripts/vendor/js-yaml.js` | Checks picked from the changed files, including `helm template` for helmfile releases; YAML is read with the bundled js-yaml (MIT) |
 
 More detail (workspace model, full guard table, token chart) is in [docs/architecture.md](docs/architecture.md).
 
@@ -199,14 +199,14 @@ Not published yet. A comparison of Flash-only, Argon-only and Firstmate on a fix
 
 ## Known limitations
 
-- macOS and Linux only for now. On Windows the installer stops; run it with `--check` and send the report (a port needs fm.sh without bash and hook commands that work in the Windows shell).
+- Windows support is new: tested in CI (GitHub Actions, windows-latest), not yet in long daily use. On Windows the hooks call `node` from PATH.
 - The gate checks syntax and rendering, not behaviour. Review the diff as you would any PR.
 - Charts vendored as git submodules render only if they are checked out in your clone; otherwise the gate reports SKIP.
 - Prompt rules guide the models but are not enforced; only the hooks and scripts are.
 
 ## Contributing
 
-Edit files under `plugin/`, run `npm test` (guard policy, budget, context hooks, `fm.sh` workspace and `shape`; needs git, node and ruby), reinstall with `node install.js`, re-select the agent, and try the change in the App. Issues and PRs are welcome.
+Edit files under `plugin/`, run `npm test` (guard policy, budget, context hooks, `fm.js` workspace and `shape`; needs git, node and ruby), reinstall with `node install.js`, re-select the agent, and try the change in the App. Issues and PRs are welcome.
 
 ## License
 

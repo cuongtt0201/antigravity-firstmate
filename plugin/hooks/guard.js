@@ -27,9 +27,11 @@ const PROTECTED_RE = /\.gemini[\\/]+config[\\/]+(plugins[\\/]+flash-ultra|hooks\
 const FREE_PATH_RE = /[\\/]\.firstmate[\\/](facts\.md|notes[\\/])/;
 // Commands that change files: redirects into a file, in-place edits, moves, deletes, copies and git changes.
 const WRITE_CMD_RE = /(^|[^\w>&-])(\d?>>?|&>)\s*(?!\/dev\/null\b|&\d)[^\s|;&]|\b(sed|perl)\s+(-\w*\s+)*-i|\b(rm|mv|cp|tee|truncate|chmod|chown|ln|mkdir|touch|rsync)\s|\bgit\s+(\S+\s+)*?(checkout|reset|commit|add|stash|clean|restore|apply|merge|rebase|push|cherry-pick|rm|mv)\b|\b(npm|yarn|pnpm|pip|pip3)\s+(install|i|add|remove|uninstall)\b/;
-const FM_CALL_RE = /\bbash\s+\S*flash-ultra[\\/]scripts[\\/]fm\.sh\b/g;
-// one call of the plugin's own fm.sh with its arguments, up to the next separator (installed or repo copy)
-const FM_SCRIPT_RE = new RegExp(`\\bbash\\s+(\\S*flash-ultra|${PLUGIN_DIR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})[\\\\/]scripts[\\\\/]fm\\.sh\\b[^&;|\\n]*`, 'g');
+// The plugin's workspace script, `node "<plugin>/scripts/fm.js"` (or the old `bash .../fm.sh`), installed or repo copy.
+const PLUGIN_RE_SRC = `(?:[^"\\s]*flash-ultra|${PLUGIN_DIR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})[\\\\/]+scripts[\\\\/]+fm\\.(?:js|sh)`;
+const FM_HEAD_SRC = `\\b(?:bash|node(?:\\.exe)?)\\s+(?:"[^"]*?${PLUGIN_RE_SRC}"|${PLUGIN_RE_SRC})`;
+const FM_CALL_RE = new RegExp(FM_HEAD_SRC, 'g'); // the script itself, blanked before the tamper check
+const FM_SCRIPT_RE = new RegExp(`${FM_HEAD_SRC}[^&;|\\n]*`, 'g'); // one call with its arguments
 
 const out = (obj) => { process.stdout.write(JSON.stringify(obj)); process.exit(0); };
 const allow = () => out({ decision: 'allow' });
@@ -231,7 +233,7 @@ function main() {
     if (st.subagents + n > MAX_SUBAGENTS) {
       decision = { decision: 'deny', reason: `[guard] This chat already launched ${st.subagents} subagents (cap ${MAX_SUBAGENTS} per day). Report what you have to the captain and ask before launching more.` };
     } else if (sharedTask(args)) {
-      decision = { decision: 'deny', reason: `[guard] Two or more workers in this call share the task workspace .firstmate/wt/${sharedTask(args)}. Give each independent part its own task (fm.sh start <repo> <task> once per part), then send one worker per task.` };
+      decision = { decision: 'deny', reason: `[guard] Two or more workers in this call share the task workspace .firstmate/wt/${sharedTask(args)}. Give each independent part its own task (fm.js start <repo> <task> once per part), then send one worker per task.` };
     } else {
       st.subagents += n;
       if (Array.isArray(args.Subagents)) {
@@ -248,7 +250,7 @@ function main() {
 
   const agent = decision.decision === 'allow' ? agentOf(convoId, st, ev.modelName || p.modelName) : '';
 
-  // First-mate budget. Its facts, notes, the plugin's playbooks and fm.sh are free; every other read
+  // First-mate budget. Its facts, notes, the plugin's playbooks and fm.js are free; every other read
   // and every other command segment counts (so chaining a free command does not hide a read).
   if (agent === 'firstmate' && (READ_TOOLS.has(tool) || tool === 'run_command')) {
     const freePath = (s) => FREE_PATH_RE.test(s) || s.includes(PLUGIN_DIR);

@@ -41,7 +41,7 @@ You are a capable worker. You get one task with a brief from an orchestrator, wh
 # Writing to a word limit
 When the brief gives a word limit (for /best, the `deliverable:` lines in `best/brief.md`):
 1. Plan the sections, each with a word budget; the budgets add up to the limit.
-2. Write the headings first, then fill ONE section at a time with the file tools. After each section run `bash {{PLUGIN_DIR}}/scripts/fm.sh shape <brief> --sections <your file name>` and compare each section with its budget.
+2. Write the headings first, then fill ONE section at a time with the file tools. After each section run `node "{{PLUGIN_DIR}}/scripts/fm.js" shape <brief> --sections <your file name>` and compare each section with its budget.
 3. Over the limit: shorten only the sections that are over their budget, with replace_file_content. At most 2 shortening passes; if the shape line still says OVER, stop and report STATUS: ISSUES with that line.
 4. Write and edit prose with the file tools only. Never build or rewrite a document from a Python or shell script, a heredoc or a string literal.
 5. CHECK in your report is the shape line for your file.

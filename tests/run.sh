@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Regression tests for the plugin's code: guard policy, first-mate budget, context hooks, fm.sh workspace.
+# Regression tests for the plugin's code: guard policy, first-mate budget, context hooks, fm.js workspace.
 #   bash tests/run.sh
 # Needs git, node (with node:sqlite), ruby; helm and terraform are optional. Runs in a temp dir,
 # never touches ~/.gemini or the real hook state.
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-P="$ROOT/plugin"; FM="$P/scripts/fm.sh"; GUARD="$P/hooks/guard.js"; INJECT="$P/hooks/inject.js"
+P="$ROOT/plugin"; FMJS="$P/scripts/fm.js"; GUARD="$P/hooks/guard.js"; INJECT="$P/hooks/inject.js"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
-export FM_STATE_DIR="$T/state" FM_CONVO_DB="$T/convos.db" FM_BRAIN_DIR="$T/brain" GIT_CONFIG_GLOBAL=/dev/null
+export FM_STATE_DIR="$T/state" FM_CONVO_DB="$T/convos.db" FM_BRAIN_DIR="$T/brain" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+fm() { node "$FMJS" "$@"; }
 PASS=0; FAIL=0
 ok()  { PASS=$((PASS + 1)); }
 bad() { FAIL=$((FAIL + 1)); echo "FAIL: $*"; }
@@ -64,6 +65,9 @@ force_ask|ssh root@10.0.0.1 uptime
 deny|bash -c "kubectl delete ns test"
 deny|FOO=1 sudo kubectl drain node-1
 allow|bash /Users/me/.gemini/config/plugins/flash-ultra/scripts/fm.sh gate /r t1
+allow|node "/Users/me/.gemini/config/plugins/flash-ultra/scripts/fm.js" gate /r t1
+allow|node "C:/Users/A B/.gemini/config/plugins/flash-ultra/scripts/fm.js" status C:/r
+deny|node "/Users/me/.gemini/config/plugins/flash-ultra/scripts/fm.js" init /r && chmod -R u+w /Users/me/.gemini/config/plugins/flash-ultra
 deny|bash /Users/me/.gemini/config/plugins/flash-ultra/scripts/fm.sh init /r && chmod -R u+w /Users/me/.gemini/config/plugins/flash-ultra
 CASES
 
@@ -130,13 +134,13 @@ invoke fm 0 30
 check "task workspace source is not free" allow "$(guard fm view_file '{"AbsolutePath":"/r/.firstmate/wt/t1/src/a.ts"}')"
 check "...and was counted" 1 "$(used fm)"
 invoke fm 0 40
-guard fm run_command "$(cmdjson "cd /r && bash $P/scripts/fm.sh init /r && cat a.ts && grep -rn x .")" >/dev/null
+guard fm run_command "$(cmdjson "cd /r && node \"$FMJS\" init /r && cat a.ts && grep -rn x .")" >/dev/null
 check "a command costs 1 however it is chained" 1 "$(used fm)"
 guard fm run_command "$(cmdjson "curl -s https://x/a | python3 -c \"import sys, json; d=json.load(sys.stdin); print('a | b')\" && curl -s https://x/b | python3 -c \"import json; print(1)\"")" >/dev/null
 check "quotes, semicolons and pipes do not multiply the cost" 2 "$(used fm)"
-guard fm run_command "$(cmdjson "bash $P/scripts/fm.sh status /r")" >/dev/null
+guard fm run_command "$(cmdjson "node \"$FMJS\" status /r")" >/dev/null
 check "a plugin-script-only command is free" 2 "$(used fm)"
-guard fm run_command "$(cmdjson "bash $P/scripts/fm.sh status /r && cat /r/secret.ts")" >/dev/null
+guard fm run_command "$(cmdjson "node \"$FMJS\" status /r && cat /r/secret.ts")" >/dev/null
 check "chaining a read after the plugin script is not free" 3 "$(used fm)"
 invoke fm 0 50
 for i in $(seq 1 20); do guard fm view_file "{\"AbsolutePath\":\"/x/p$i.ts\"}" > "$T/par.$i" 2> "$T/par.$i.err" & done; wait
@@ -164,14 +168,14 @@ check "worker has no budget" allow "$(for i in $(seq 1 8); do guard wk view_file
 
 echo "== context hooks"
 mkdir -p "$T/my repo" && (cd "$T/my repo" && git init -q -b main && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m i)
-mkdir -p "$T/plain folder"; bash "$FM" init "$T/plain folder" >/dev/null 2>&1
+mkdir -p "$T/plain folder"; fm init "$T/plain folder" >/dev/null 2>&1
 check "init refuses a folder that is not a repo" 2 $?
 check "...and creates nothing" no "$([ -d "$T/plain folder/.git" ] && echo yes || echo no)"
-bash "$FM" init "$T/plain folder" --new-repo >/dev/null 2>&1
+fm init "$T/plain folder" --new-repo >/dev/null 2>&1
 check "init --new-repo creates the repo" yes "$([ -d "$T/plain folder/.git" ] && echo yes || echo no)"
-bash "$FM" init "$T/my repo" >/dev/null && bash "$FM" fact "$T/my repo" "Uses Fastify 5" >/dev/null
-check "fact dedupe" "already" "$(bash "$FM" fact "$T/my repo" "uses fastify 5" | grep -o already)"
-bash "$FM" fact "$T/my repo" "Uses Prisma" "uses fastify 5" "Deploys with PM2" >/dev/null
+fm init "$T/my repo" >/dev/null && fm fact "$T/my repo" "Uses Fastify 5" >/dev/null
+check "fact dedupe" "already" "$(fm fact "$T/my repo" "uses fastify 5" | grep -o already)"
+fm fact "$T/my repo" "Uses Prisma" "uses fastify 5" "Deploys with PM2" >/dev/null
 check "several facts in one call, duplicates skipped" 3 "$(grep -c '^- ' "$T/my repo/.firstmate/facts.md")"
 SESSION=$(printf '{"conversationId":"fm","workspacePaths":["file://%s"]}' "$(sed 's/ /%20/g' <<< "$T/my repo")" | node "$INJECT" session 2>/dev/null)
 check "facts injected for a percent-encoded path" 1 "$(grep -c 'Uses Fastify 5' <<< "$SESSION")"
@@ -185,29 +189,29 @@ RULES=$(printf '{"conversationId":"fm","invocationNum":0,"initialNumSteps":1}' |
 check "first mate may pass skills: none" 1 "$(grep -c 'skills: none' <<< "$RULES")"
 check "first mate is not told to pass its own playbooks as skills" 0 "$(grep -c 'written deliverables → best' "$P/agents/firstmate.md")"
 
-echo "== fm.sh shape"
+echo "== fm.js shape"
 B="$T/task one/best"; mkdir -p "$B"
 printf 'Brief\n```\ndeliverable: final.md words=20 covers=R1-R2 drafts=draft_*.md\n- deliverable: talk.md words=1.000 covers=R3\n```\n' > "$B/brief.md"
 printf '# Kế hoạch\n| --- | --- |\nmột hai ba bốn năm sáu bảy tám chín mười\n## Phần 2\n**Đơn** vị - 2.500 từ\n' > "$B/draft_1.md"
 seq 1 30 | tr '\n' ' ' > "$B/draft_2.md"
-SHAPE=$(bash "$FM" shape "$B/brief.md" --sections); RC=$?
+SHAPE=$(fm shape "$B/brief.md" --sections); RC=$?
 check "shape: a draft over the limit exits 1" 1 "$RC"
 check "shape: markdown symbols are not words, Vietnamese syllables are" 1 "$(grep -c 'OK     draft_1.md: 18 / 20 words' <<< "$SHAPE")"
 check "shape: over by more than 10%" 1 "$(grep -c 'OVER   draft_2.md: 30 / 20' <<< "$SHAPE")"
 check "shape: unwritten deliverables are listed" 2 "$(grep -c 'not written yet' <<< "$SHAPE")"
 check "shape: limits with a thousands separator" 1 "$(grep -c 'talk.md' <<< "$SHAPE")"
 check "shape: words per section" 1 "$(grep -cE '^ +6  ## Phần 2$' <<< "$SHAPE")"
-check "shape: one file only" "  OVER   draft_2.md: 30 / 20 words (+50%)" "$(bash "$FM" shape "$B/brief.md" draft_2.md | grep draft)"
-check "shape: one file only, the others are not counted" 0 "$(bash "$FM" shape "$B/brief.md" --sections draft_1.md >/dev/null; echo $?)"
+check "shape: one file only" "  OVER   draft_2.md: 30 / 20 words (+50%)" "$(fm shape "$B/brief.md" draft_2.md | grep draft)"
+check "shape: one file only, the others are not counted" 0 "$(fm shape "$B/brief.md" --sections draft_1.md >/dev/null; echo $?)"
 printf -- '- `deliverable: best/final.md words=20 covers=R1-R2 drafts=best/draft_*.md`\n**deliverable:** **talk.md** words=10\n' > "$B/brief2.md"
-SHAPE=$(bash "$FM" shape "$B/brief2.md")
+SHAPE=$(fm shape "$B/brief2.md")
 check "shape: best/ prefixes, backticks and bold are understood" 3 "$(grep -cE 'draft_1.md: 18|draft_2.md: 30|talk.md: not written' <<< "$SHAPE")"
 rm "$B/draft_2.md"
-bash "$FM" shape "$B/brief.md" >/dev/null; check "shape: all within limits exits 0" 0 $?
-rm "$B/draft_1.md"; check "shape: missing drafts are named" 1 "$(bash "$FM" shape "$B/brief.md" | grep -c 'draft_\*.md: no drafts yet')"
-printf 'no lines\n' > "$B/empty.md"; bash "$FM" shape "$B/empty.md" >/dev/null 2>&1; check "shape: a brief without deliverable lines is an error" 2 $?
+fm shape "$B/brief.md" >/dev/null; check "shape: all within limits exits 0" 0 $?
+rm "$B/draft_1.md"; check "shape: missing drafts are named" 1 "$(fm shape "$B/brief.md" | grep -c 'draft_\*.md: no drafts yet')"
+printf 'no lines\n' > "$B/empty.md"; fm shape "$B/empty.md" >/dev/null 2>&1; check "shape: a brief without deliverable lines is an error" 2 $?
 
-echo "== fm.sh workspace"
+echo "== fm.js workspace"
 R="$T/repo"; mkdir -p "$R/hf" "$R/plain/templates" "$R/svc/node_modules/pkg" "$R/docs dir"
 (cd "$R" && git init -q -b main
  printf 'node_modules/\n.env\n' > .gitignore; echo "module.exports=1" > svc/node_modules/pkg/index.js; echo "SECRET=abc" > .env
@@ -217,33 +221,36 @@ R="$T/repo"; mkdir -p "$R/hf" "$R/plain/templates" "$R/svc/node_modules/pkg" "$R
  printf 'releases:\n  - name: novals\n    chart: ../plain\n' > hf/helmfile.yaml
  printf 'one\ntwo\nthree\n' > "docs dir/run book.md"; printf 'a\nb\nc\n' > conflict.txt; printf 'x\n' > gone.txt
  git add -A && git -c user.name=t -c user.email=t@t commit -qm base && git checkout -q -b ft/x)
-bash "$FM" init "$R" >/dev/null
+fm init "$R" >/dev/null
 check "init does not commit" 1 "$(git -C "$R" rev-list --count HEAD)"
 check "init hides .firstmate" "" "$(git -C "$R" status --porcelain)"
-bash "$FM" start "$R" t1 >/dev/null; W="$R/.firstmate/wt/t1"
-check "deps linked into workspace" yes "$([ -L "$W/svc/node_modules" ] && [ -L "$W/.env" ] && echo yes)"
+fm start "$R" t1 >/dev/null; W="$R/.firstmate/wt/t1"
+check "deps available in the workspace" yes "$([ -f "$W/svc/node_modules/pkg/index.js" ] && grep -q SECRET "$W/.env" && echo yes)"
 printf 'job2:\n  <<: *d\n' >> "$W/ci.yml"; sed -i '' 's/a: x/a: y/' "$W/plain/values.yaml" 2>/dev/null || sed -i 's/a: x/a: y/' "$W/plain/values.yaml"; printf 'one\nTWO\nthree\n' > "$W/docs dir/run book.md"
-bash "$FM" save "$R" t1 edits >/dev/null
+fm save "$R" t1 edits >/dev/null
 check "links are never saved" 0 "$(git -C "$W" show --name-only --format= HEAD | grep -cE 'node_modules|\.env')"
-check "gate passes (yaml anchors, helm, no-values release)" 0 "$(bash "$FM" gate "$R" t1 >/dev/null 2>&1; echo $?)"
-bash "$FM" gate "$R" t1 'test -f svc/node_modules/pkg/index.js && grep -q SECRET .env && echo junk > cache.txt' >/dev/null 2>&1
+check "gate passes (yaml anchors, helm, no-values release)" 0 "$(fm gate "$R" t1 >/dev/null 2>&1; echo $?)"
+fm gate "$R" t1 'test -f svc/node_modules/pkg/index.js && grep -q SECRET .env && echo junk > cache.txt' >/dev/null 2>&1
 check "gate with deps passes and leaves no junk" "" "$(git -C "$W" status --porcelain)"
-bash "$FM" deliver "$R" t1 >/dev/null 2>&1
+fm deliver "$R" t1 >/dev/null 2>&1
 check "delivered uncommitted, spaces ok" 3 "$(git -C "$R" status --porcelain | wc -l | tr -d ' ')"
 check "delivery logged in notes" 1 "$(grep -c 'delivered task t1 to ft/x, uncommitted:' "$R/.firstmate/notes/log.md")"
 check "branches untouched" "ft/x main" "$(git -C "$R" branch --format='%(refname:short)' | sort | tr '\n' ' ' | sed 's/ $//')"
 git -C "$R" checkout -q -- .
-bash "$FM" start "$R" c1 >/dev/null; printf 'a\nTASK\nc\n' > "$R/.firstmate/wt/c1/conflict.txt"; bash "$FM" save "$R" c1 x >/dev/null; bash "$FM" gate "$R" c1 >/dev/null 2>&1
+fm start "$R" c1 >/dev/null; printf 'a\nTASK\nc\n' > "$R/.firstmate/wt/c1/conflict.txt"; fm save "$R" c1 x >/dev/null; fm gate "$R" c1 >/dev/null 2>&1
 printf 'a\nCAPTAIN\nc\n' > "$R/conflict.txt"; git -C "$R" -c user.name=t -c user.email=t@t commit -qam captain
-bash "$FM" deliver "$R" c1 >/dev/null 2>&1; check "conflict exits 1" 1 $?
-check "conflict keeps the task" 1 "$(bash "$FM" status "$R" | grep -c 'c1 |')"
-git -C "$R" checkout -q -- . ; bash "$FM" clean "$R" c1 >/dev/null
-bash "$FM" start "$R" f1 >/dev/null; echo y >> "$R/.firstmate/wt/f1/gone.txt"; bash "$FM" save "$R" f1 x >/dev/null; bash "$FM" gate "$R" f1 >/dev/null 2>&1
+fm deliver "$R" c1 >/dev/null 2>&1; check "conflict exits 1" 1 $?
+check "conflict keeps the task" 1 "$(fm status "$R" | grep -c 'c1 |')"
+git -C "$R" checkout -q -- . ; fm clean "$R" c1 >/dev/null
+fm start "$R" f1 >/dev/null; echo y >> "$R/.firstmate/wt/f1/gone.txt"; fm save "$R" f1 x >/dev/null; fm gate "$R" f1 >/dev/null 2>&1
 git -C "$R" rm -q gone.txt; git -C "$R" -c user.name=t -c user.email=t@t commit -qm rm
-bash "$FM" deliver "$R" f1 >/dev/null 2>&1; check "unappliable task: error" 2 $?
+fm deliver "$R" f1 >/dev/null 2>&1; check "unappliable task: error" 2 $?
 check "unappliable task: nothing changed" "" "$(git -C "$R" status --porcelain)"
-check "unappliable task: kept" 1 "$(bash "$FM" status "$R" | grep -c 'f1 |')"
+check "unappliable task: kept" 1 "$(fm status "$R" | grep -c 'f1 |')"
 
+if [ "$(uname -s | cut -c1-5)" != MINGW ]; then
+  check "old fm.sh entry point still works" 0 "$(bash "$P/scripts/fm.sh" status "$R" >/dev/null 2>&1; echo $?)"
+fi
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" = 0 ]
