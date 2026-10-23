@@ -137,9 +137,11 @@ sequenceDiagram
 npx -y github:cuongtt0201/antigravity-firstmate
 ```
 
-To pin this release: `npx -y github:cuongtt0201/antigravity-firstmate#v0.10.1`.
+To pin this release: `npx -y github:cuongtt0201/antigravity-firstmate#v0.10.2`.
 
 The installer copies `plugin/` to `~/.gemini/config/plugins/flash-ultra/`, fills in the absolute paths for your machine, enables the plugin in `~/.gemini/config/config.json` (after backing it up) and makes the installed copy read-only, so agents cannot edit their own guardrails. Running it again updates the plugin; the previous copy is backed up to your temp folder.
+
+To see what your machine has and lacks without installing anything (works on Windows too): `npx -y github:cuongtt0201/antigravity-firstmate --check`.
 
 To remove it:
 
@@ -197,7 +199,7 @@ Not published yet. A comparison of Flash-only, Argon-only and Firstmate on a fix
 
 ## Known limitations
 
-- macOS and Linux only for now; Windows needs path fixes in the installer and the guard.
+- macOS and Linux only for now. On Windows the installer stops; run it with `--check` and send the report (a port needs fm.sh without bash and hook commands that work in the Windows shell).
 - The gate checks syntax and rendering, not behaviour. Review the diff as you would any PR.
 - Charts vendored as git submodules render only if they are checked out in your clone; otherwise the gate reports SKIP.
 - Prompt rules guide the models but are not enforced; only the hooks and scripts are.

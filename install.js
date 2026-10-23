@@ -2,6 +2,7 @@
 // Installs the flash-ultra (firstmate) plugin into Antigravity's shared config.
 //   npx github:<owner>/antigravity-firstmate              install or update
 //   npx github:<owner>/antigravity-firstmate --uninstall  remove
+//   npx github:<owner>/antigravity-firstmate --check      report what this machine has and lacks; installs nothing
 // No dependencies. Re-running replaces the installed copy (the old one is backed up).
 
 const fs = require('fs');
@@ -97,6 +98,49 @@ function install() {
   log("      agent's prompt and tools, so new chats keep using the old version until you re-select it.");
 }
 
+// What the plugin needs, checked without changing anything. Exit code 1 when something required is missing.
+function check() {
+  const { spawnSync } = require('child_process');
+  const win = process.platform === 'win32';
+  const run = (cmd, args) => {
+    const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: 10000, shell: win });
+    return r.status === 0 ? String(r.stdout || r.stderr).trim().split('\n')[0] : null;
+  };
+  const where = (cmd) => run(win ? 'where' : 'which', [cmd]);
+  const rows = [];
+  let missing = 0;
+  const add = (state, what, detail) => { rows.push(`  ${state.padEnd(8)} ${what.padEnd(26)} ${detail || ''}`); if (state === 'MISSING') missing += 1; };
+
+  add(win ? 'NOTE' : 'OK', 'operating system', `${process.platform} ${os.release()}${win ? ' (Windows is not supported yet; this report says what a port needs)' : ''}`);
+  const nodeAt = win ? process.execPath : (['/opt/homebrew/bin/node', '/usr/local/bin/node', '/usr/bin/node'].find((p) => fs.existsSync(p)) || process.execPath);
+  const nodeVer = run(nodeAt, ['--version']);
+  const sqlite = run(nodeAt, ['-e', "require('node:sqlite');console.log('ok')"]) === 'ok';
+  add(sqlite ? 'OK' : 'MISSING', 'node with node:sqlite', `${nodeAt} ${nodeVer || '?'}${sqlite ? '' : ' (needs Node.js 22.13 or newer)'}`);
+  if (/\s/.test(nodeAt) || /\s/.test(TARGET)) add('MISSING', 'paths without spaces', `${nodeAt} / ${TARGET} (the hook command cannot quote them yet)`);
+  const git = run('git', ['--version']);
+  add(git ? 'OK' : 'MISSING', 'git', git || 'install git');
+  const bash = run('bash', ['--version']);
+  add(bash ? 'OK' : 'MISSING', 'bash', bash ? `${bash} (${where('bash') || '?'})` : 'needed by fm.sh (on Windows: Git for Windows provides Git Bash)');
+  const ruby = run('ruby', ['--version']);
+  add(ruby ? 'OK' : 'OPTIONAL', 'ruby', ruby || 'YAML and helmfile checks are skipped without it');
+  for (const [cmd, args] of [['helm', ['version', '--short']], ['terraform', ['version']], ['docker', ['--version']]]) {
+    const v = run(cmd, args); add(v ? 'OK' : 'OPTIONAL', cmd, v || 'not found; its checks are skipped');
+  }
+  if (win) add('NOTE', 'terminal shell', `ComSpec=${process.env.ComSpec || '?'}; PowerShell ${run('powershell', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()']) || 'not found'}`);
+  add(fs.existsSync(CONFIG_DIR) ? 'OK' : 'MISSING', 'Antigravity config folder', CONFIG_DIR);
+  let installed = 'not installed';
+  try { installed = JSON.parse(fs.readFileSync(path.join(TARGET, 'plugin.json'), 'utf8')).version; } catch {}
+  add('NOTE', 'installed plugin', `${installed} at ${TARGET}`);
+  let enabled = false;
+  try { enabled = !!JSON.parse(fs.readFileSync(CONFIG, 'utf8')).plugins[NAME].enabled; } catch {}
+  add('NOTE', 'enabled in config.json', String(enabled));
+
+  console.log(`[firstmate] check (installs nothing), this package: v${JSON.parse(fs.readFileSync(path.join(SOURCE, 'plugin.json'), 'utf8')).version}`);
+  console.log(rows.join('\n'));
+  console.log(missing ? `[firstmate] ${missing} required item(s) missing` : '[firstmate] everything required is present');
+  if (missing) process.exitCode = 1;
+}
+
 function uninstall() {
   if (fs.existsSync(TARGET)) {
     unlock(TARGET);
@@ -112,7 +156,10 @@ function uninstall() {
 }
 
 try {
-  if (process.argv.includes('--uninstall')) uninstall(); else install();
+  if (process.argv.includes('--check')) check();
+  else if (process.platform === 'win32') throw new Error('Windows is not supported yet. Run with --check and send the report to the maintainer.');
+  else if (process.argv.includes('--uninstall')) uninstall();
+  else install();
 } catch (e) {
   console.error(`[firstmate] ERROR: ${e.message}`);
   process.exit(1);
