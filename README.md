@@ -137,7 +137,7 @@ sequenceDiagram
 npx -y github:cuongtt0201/antigravity-firstmate
 ```
 
-To pin this release: `npx -y github:cuongtt0201/antigravity-firstmate#v0.10.0`.
+To pin this release: `npx -y github:cuongtt0201/antigravity-firstmate#v0.10.1`.
 
 The installer copies `plugin/` to `~/.gemini/config/plugins/flash-ultra/`, fills in the absolute paths for your machine, enables the plugin in `~/.gemini/config/config.json` (after backing it up) and makes the installed copy read-only, so agents cannot edit their own guardrails. Running it again updates the plugin; the previous copy is backed up to your temp folder.
 
@@ -166,11 +166,13 @@ npx -y github:cuongtt0201/antigravity-firstmate --uninstall
 
 The guard hook runs on every tool call while the plugin is enabled:
 
-- **Allowed:** reading (`kubectl get/describe/logs/top`, `git log/diff`, `helm template`, `terraform plan`, `gcloud … list`), downloads from buckets.
-- **Denied, you run it:** `kubectl apply/delete/patch/scale/rollout restart/drain…`, `helm install/upgrade/uninstall`, `helmfile apply/sync`, `terraform/terragrunt apply/destroy/import/state rm`, `gcloud … create/delete/update`, writes to `gs://`, `git push`.
-- **Asks you first:** `kubectl exec` into prod pods, `kubectl cp/debug/run`, `ssh`, `scp`.
+- **Allowed:** reading (`kubectl get/describe/logs/top/events`, `git log/diff`, `helm template`, `terraform plan`, `gcloud … list`), downloads from buckets.
+- **Denied, you run it:** every `kubectl` command that is not on the read list (apply, patch, delete, scale, rollout restart, exec, port-forward, cp, config use-context…), `helm install/upgrade/uninstall`, `helmfile apply/sync`, `terraform/terragrunt apply/destroy/import/state rm`, `gcloud … create/delete/update`, writes to `gs://`, `git push`.
+- **Asks you first:** `ssh`, `scp`.
 - **MCP tools:** reads (get, list, read, search, describe, … and `*_read_only`) run; anything else asks you first; explorers cannot call it at all.
-- **Budget:** at most 6 direct reads or command segments per message for the first mate (its facts, notes, playbooks and `fm.sh` are free); after that it must send explorers.
+- **Budget:** each direct read or command by the first mate counts 1, however it is written (its facts, notes, playbooks and `fm.sh` are free). After 6 it is told to send explorers; at 15 it is stopped.
+- **One worker per task workspace:** parallel workers sent into the same `.firstmate/wt/<task>` are refused.
+- **No surprise repos:** `fm.sh init` refuses a folder that is not a git repo until you agree (`--new-repo`).
 - **Also:** explorers cannot write, workers and checkers are pinned to Flash, at most 12 subagents per chat per day, repeated reads of an unchanged file are stopped, and agents cannot edit the plugin.
 
 The guard reads command text, so it is a safety net, not a sandbox.

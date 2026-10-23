@@ -8,7 +8,8 @@ const CONVO_DB = process.env.FM_CONVO_DB || path.join(os.homedir(), '.gemini', '
 const BRAIN_DIR = process.env.FM_BRAIN_DIR || path.join(os.homedir(), '.gemini', 'antigravity', 'brain');
 const STATE_TTL_MS = 24 * 60 * 60 * 1000;
 const PLUGIN_DIR = path.resolve(__dirname, '..');
-const DIRECT_MAX = 6; // first mate's own reads/commands per captain message
+const DIRECT_MAX = 6; // first mate's own tool calls per captain message before it is told to delegate
+const HARD_MAX = 15; // ...and the hard stop against a runaway first mate
 const BUDGET_IDLE_RESET_MS = 5 * 60 * 1000; // fallback reset when no new-message signal arrives
 
 const convoKey = (id) => String(id || 'unknown').replace(/[^A-Za-z0-9_-]/g, '_');
@@ -112,4 +113,4 @@ function agentOf(id, st, model) {
   return '';
 }
 
-module.exports = { STATE_DIR, PLUGIN_DIR, DIRECT_MAX, unwrap, loadState, saveState, agentOf, lastUserStep, resetBudget, spendBudget, budgetUsed, budgetLog };
+module.exports = { STATE_DIR, PLUGIN_DIR, DIRECT_MAX, HARD_MAX, unwrap, loadState, saveState, agentOf, lastUserStep, resetBudget, spendBudget, budgetUsed, budgetLog };
