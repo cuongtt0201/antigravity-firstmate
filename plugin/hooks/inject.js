@@ -39,6 +39,7 @@ function factsMessage(workspaces) {
   for (const ws of workspaces) {
     let dir = String(ws).replace(/^file:\/\//, '');
     try { dir = decodeURIComponent(dir); } catch {}
+    if (/^\/[A-Za-z]:[\\/]/.test(dir)) dir = dir.slice(1); // file:///C:/x on Windows
     if (!dir) continue;
     const repo = mainCheckout(dir);
     if (!repo) { parts.push(`No firstmate facts for ${dir}: it is not a git repo, so there is no .firstmate/facts.md to read.`); continue; }

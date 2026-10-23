@@ -28,7 +28,8 @@ const FREE_PATH_RE = /[\\/]\.firstmate[\\/](facts\.md|notes[\\/])/;
 // Commands that change files: redirects into a file, in-place edits, moves, deletes, copies and git changes.
 const WRITE_CMD_RE = /(^|[^\w>&-])(\d?>>?|&>)\s*(?!\/dev\/null\b|&\d)[^\s|;&]|\b(sed|perl)\s+(-\w*\s+)*-i|\b(rm|mv|cp|tee|truncate|chmod|chown|ln|mkdir|touch|rsync)\s|\bgit\s+(\S+\s+)*?(checkout|reset|commit|add|stash|clean|restore|apply|merge|rebase|push|cherry-pick|rm|mv)\b|\b(npm|yarn|pnpm|pip|pip3)\s+(install|i|add|remove|uninstall)\b/;
 // The plugin's workspace script, `node "<plugin>/scripts/fm.js"` (or the old `bash .../fm.sh`), installed or repo copy.
-const PLUGIN_RE_SRC = `(?:[^"\\s]*flash-ultra|${PLUGIN_DIR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})[\\\\/]+scripts[\\\\/]+fm\\.(?:js|sh)`;
+const PLUGIN_DIR_SRC = PLUGIN_DIR.split(/[\\/]+/).map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\\\/]+');
+const PLUGIN_RE_SRC = `(?:[^"\\s]*flash-ultra|${PLUGIN_DIR_SRC})[\\\\/]+scripts[\\\\/]+fm\\.(?:js|sh)`;
 const FM_HEAD_SRC = `\\b(?:bash|node(?:\\.exe)?)\\s+(?:"[^"]*?${PLUGIN_RE_SRC}"|${PLUGIN_RE_SRC})`;
 const FM_CALL_RE = new RegExp(FM_HEAD_SRC, 'g'); // the script itself, blanked before the tamper check
 const FM_SCRIPT_RE = new RegExp(`${FM_HEAD_SRC}[^&;|\\n]*`, 'g'); // one call with its arguments
@@ -253,7 +254,8 @@ function main() {
   // First-mate budget. Its facts, notes, the plugin's playbooks and fm.js are free; every other read
   // and every other command segment counts (so chaining a free command does not hide a read).
   if (agent === 'firstmate' && (READ_TOOLS.has(tool) || tool === 'run_command')) {
-    const freePath = (s) => FREE_PATH_RE.test(s) || s.includes(PLUGIN_DIR);
+    const slash = (x) => String(x).replace(/\\+/g, '/');
+    const freePath = (s) => FREE_PATH_RE.test(s) || slash(s).includes(slash(PLUGIN_DIR));
     // One call costs 1, whatever the command looks like; only plugin-script and free-path calls are free.
     const rest = tool === 'run_command' ? cmd.replace(FM_SCRIPT_RE, '').replace(/\bcd\s+\S+/g, '') : '';
     const cost = tool === 'run_command'
