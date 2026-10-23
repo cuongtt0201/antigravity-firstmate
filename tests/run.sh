@@ -29,9 +29,17 @@ allow|kubectl describe pod x | grep -i delete
 deny|kubectl delete pod x -n dev
 deny|kubectl -n prod rollout restart deploy/core
 allow|kubectl rollout status deploy/core -n prod
-force_ask|kubectl exec -it prod-core-insurance-abc -- sh
-allow|kubectl exec -n dev dev-spring-micro-products-abc -- curl localhost
-force_ask|kubectl --context gke_globalcare_prod exec api-1 -- ls
+deny|kubectl exec -it prod-core-insurance-abc -- sh
+deny|kubectl exec -n dev dev-spring-micro-products-abc -- curl localhost
+deny|kubectl --context gke_globalcare_prod exec api-1 -- ls
+deny|kubectl port-forward svc/x 8080:80
+deny|kubectl -n dev cp a pod:/tmp/a
+deny|kubectl config use-context prod
+allow|kubectl config view --minify
+allow|kubectl top pods -n dev
+allow|kubectl get events -n dev --sort-by=.lastTimestamp
+allow|kubectl auth can-i list pods
+allow|kubectl --help
 deny|kubectl scale deploy x --replicas=0
 deny|kubectl --context gke_prod apply -f x.yaml
 allow|helm template x ./chart -f v.yaml
@@ -101,37 +109,51 @@ done
 echo "== guard: subagents pinned to Flash"
 OUT=$(node -e 'process.stdout.write(JSON.stringify({conversationId:"pin",toolCall:{name:"invoke_subagent",args:{Subagents:[{TypeName:"explorer",Model:"inherit"},{TypeName:"worker"}]}}}))' | node "$GUARD" 2>/dev/null)
 check "explorer+worker pinned" 2 "$(grep -o '"Model":"flash"' <<< "$OUT" | wc -l | tr -d ' ')"
+two() { node -e 'process.stdout.write(JSON.stringify({conversationId:"two",toolCall:{name:"invoke_subagent",args:{Subagents:[{TypeName:"worker",Prompt:"Task workspace: /r/.firstmate/wt/"+process.argv[1]+"/x"},{TypeName:"worker",Prompt:"write only in /r/.firstmate/wt/"+process.argv[2]+"/y"},{TypeName:"explorer",Prompt:"read /r/.firstmate/wt/"+process.argv[1]}]}}}))' "$1" "$2" | node "$GUARD" 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).decision))'; }
+check "two workers in one task workspace are refused" deny "$(two infra infra)"
+check "one worker per task workspace is fine" allow "$(two infra-tf infra-docs)"
 
 echo "== first-mate budget"
+spend() { for i in $(seq 1 "$2"); do guard fm view_file "{\"AbsolutePath\":\"/x/$1$i.ts\"}" >/dev/null; done; }
 invoke fm 0 1
-for i in 1 2 3 4 5 6; do check "read $i within budget" allow "$(guard fm view_file "{\"AbsolutePath\":\"/x/f$i.ts\"}")"; done
-check "read 7 over budget" deny "$(guard fm view_file '{"AbsolutePath":"/x/f7.ts"}')"
+spend a 14
+check "read 15 still allowed (6 is a reminder, 15 the hard stop)" allow "$(guard fm view_file '{"AbsolutePath":"/x/f15.ts"}')"
+check "read 16 over the hard stop" deny "$(guard fm view_file '{"AbsolutePath":"/x/f16.ts"}')"
 check "facts.md is free" allow "$(guard fm view_file '{"AbsolutePath":"/r/.firstmate/facts.md"}')"
-invoke fm 1 9; invoke fm 2 12
-check "later invocations of the same message do not reset" deny "$(guard fm view_file '{"AbsolutePath":"/x/f8.ts"}')"
+RULES=$(printf '{"conversationId":"fm","invocationNum":1,"initialNumSteps":9}' | node "$INJECT" invoke 2>/dev/null)
+check "over 6, the rules tell the first mate to delegate" 1 "$(grep -c 'send further reading to explorers' <<< "$RULES")"
+invoke fm 2 12
+check "later invocations of the same message do not reset" deny "$(guard fm view_file '{"AbsolutePath":"/x/f17.ts"}')"
 invoke fm 0 20
-check "new message (invocationNum 0) resets" allow "$(guard fm view_file '{"AbsolutePath":"/x/f9.ts"}')"
+check "new message (invocationNum 0) resets" allow "$(guard fm view_file '{"AbsolutePath":"/x/f18.ts"}')"
 invoke fm 0 30
 check "task workspace source is not free" allow "$(guard fm view_file '{"AbsolutePath":"/r/.firstmate/wt/t1/src/a.ts"}')"
 check "...and was counted" 1 "$(used fm)"
 invoke fm 0 40
 guard fm run_command "$(cmdjson "cd /r && bash $P/scripts/fm.sh init /r && cat a.ts && grep -rn x .")" >/dev/null
-check "chained command counts each read segment" 2 "$(used fm)"
+check "a command costs 1 however it is chained" 1 "$(used fm)"
+guard fm run_command "$(cmdjson "curl -s https://x/a | python3 -c \"import sys, json; d=json.load(sys.stdin); print('a | b')\" && curl -s https://x/b | python3 -c \"import json; print(1)\"")" >/dev/null
+check "quotes, semicolons and pipes do not multiply the cost" 2 "$(used fm)"
+guard fm run_command "$(cmdjson "bash $P/scripts/fm.sh status /r")" >/dev/null
+check "a plugin-script-only command is free" 2 "$(used fm)"
+guard fm run_command "$(cmdjson "bash $P/scripts/fm.sh status /r && cat /r/secret.ts")" >/dev/null
+check "chaining a read after the plugin script is not free" 3 "$(used fm)"
 invoke fm 0 50
-for i in $(seq 1 10); do guard fm view_file "{\"AbsolutePath\":\"/x/p$i.ts\"}" > "$T/par.$i" 2> "$T/par.$i.err" & done; wait
-check "parallel reads: every guard answered" 10 "$(grep -lE '^(allow|deny)$' "$T"/par.? "$T"/par.10 | wc -l | tr -d ' ')"
-check "parallel reads: exactly 6 allowed" 6 "$(grep -lx allow "$T"/par.? "$T"/par.10 | wc -l | tr -d ' ')"
+for i in $(seq 1 20); do guard fm view_file "{\"AbsolutePath\":\"/x/p$i.ts\"}" > "$T/par.$i" 2> "$T/par.$i.err" & done; wait
+check "parallel reads: every guard answered" 20 "$(cat "$T"/par.[0-9]* | grep -oE 'allow|deny' | wc -l | tr -d ' ')"
+ALLOWED=$(cat "$T"/par.[0-9]* | grep -o allow | wc -l | tr -d ' ')
+check "parallel reads: never more than 15 allowed, at most 2 lost to races" yes "$([ "$ALLOWED" -le 15 ] && [ "$ALLOWED" -ge 13 ] && echo yes || echo "no ($ALLOWED)")"
 # per captain message, from the transcript: a subagent report (new execution, same USER_INPUT) does not reset
 TR="$FM_BRAIN_DIR/fm/.system_generated/logs"; mkdir -p "$TR"
 echo '{"step_index":0,"type":"USER_INPUT","content":"q1"}' > "$TR/transcript.jsonl"
 invoke fm 0 60
-for i in 1 2 3 4 5 6; do guard fm view_file "{\"AbsolutePath\":\"/x/t$i.ts\"}" >/dev/null; done
+spend t 15
 echo '{"step_index":5,"type":"SYSTEM_MESSAGE","content":"explorer report"}' >> "$TR/transcript.jsonl"
 invoke fm 0 70
-check "subagent report does not reset the budget" deny "$(guard fm view_file '{"AbsolutePath":"/x/t7.ts"}')"
+check "subagent report does not reset the budget" deny "$(guard fm view_file '{"AbsolutePath":"/x/t16.ts"}')"
 echo '{"step_index":9,"type":"USER_INPUT","content":"q2"}' >> "$TR/transcript.jsonl"
 invoke fm 3 80
-check "new captain message resets the budget" allow "$(guard fm view_file '{"AbsolutePath":"/x/t8.ts"}')"
+check "new captain message resets the budget" allow "$(guard fm view_file '{"AbsolutePath":"/x/t17.ts"}')"
 check "unindexed Argon chat gets first-mate rules" 1 "$(printf '{"conversationId":"newchat","invocationNum":0,"modelName":"gemini-4-argon-medium"}' | node "$INJECT" invoke 2>/dev/null | grep -c 'firstmate rules')"
 check "young chat without agent name, on Argon, gets first-mate rules" 1 "$(printf '{"conversationId":"young","invocationNum":0,"modelName":"gemini-4-argon-medium"}' | node "$INJECT" invoke 2>/dev/null | grep -c 'firstmate rules')"
 node -e "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1]);d.exec(\"update conversation_summaries set agent_name='firstmate', step_count=9 where conversation_id='young'\")" "$FM_CONVO_DB" 2>/dev/null
@@ -142,6 +164,11 @@ check "worker has no budget" allow "$(for i in $(seq 1 8); do guard wk view_file
 
 echo "== context hooks"
 mkdir -p "$T/my repo" && (cd "$T/my repo" && git init -q -b main && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m i)
+mkdir -p "$T/plain folder"; bash "$FM" init "$T/plain folder" >/dev/null 2>&1
+check "init refuses a folder that is not a repo" 2 $?
+check "...and creates nothing" no "$([ -d "$T/plain folder/.git" ] && echo yes || echo no)"
+bash "$FM" init "$T/plain folder" --new-repo >/dev/null 2>&1
+check "init --new-repo creates the repo" yes "$([ -d "$T/plain folder/.git" ] && echo yes || echo no)"
 bash "$FM" init "$T/my repo" >/dev/null && bash "$FM" fact "$T/my repo" "Uses Fastify 5" >/dev/null
 check "fact dedupe" "already" "$(bash "$FM" fact "$T/my repo" "uses fastify 5" | grep -o already)"
 bash "$FM" fact "$T/my repo" "Uses Prisma" "uses fastify 5" "Deploys with PM2" >/dev/null

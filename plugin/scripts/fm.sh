@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # firstmate workspace: the model's own task worktrees, kept out of the captain's branches.
-#   fm.sh init    <repo>                     exclude .firstmate/ locally, create facts.md, show state
+#   fm.sh init    <repo> [--new-repo]        exclude .firstmate/ locally, create facts.md, show state
+#                                            (a folder that is not a git repo needs --new-repo, after the captain agrees)
 #   fm.sh fact    <repo> "<fact>" ["<fact>"…]  add dated lines to .firstmate/facts.md (skips duplicates)
 #   fm.sh start   <repo> <task>              detached worktree at <repo>/.firstmate/wt/<task>
 #   fm.sh save    <repo> <task> "<message>"  commit the task's changes inside the task
@@ -99,6 +100,7 @@ shape)
 init)
   NEW=0
   if ! git -C "$REPO_ARG" rev-parse --git-dir >/dev/null 2>&1; then
+    [ "${1:-}" = "--new-repo" ] || die "'$REPO_ARG' is not a git repo. Task workspaces need one: ask the captain first; if they agree, run: fm.sh init $REPO_ARG --new-repo (it creates a repo with an initial commit of the folder). Read-only work needs no init."
     git -C "$REPO_ARG" init -q -b main; NEW=1
   fi
   need_repo; cd "$R"

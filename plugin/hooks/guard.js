@@ -5,14 +5,16 @@
 //     denied (the captain runs them); remote shells and production pod shells need the captain's approval.
 //  3. Pin worker/checker subagents to Flash, and cap subagent launches per chat.
 //  4. Loop guard: deny the 4th identical read of an unchanged file; nudge after 40 reads in a row.
-//  5. First-mate budget: in chats run by the firstmate agent, at most DIRECT_MAX direct reads/commands per
-//     captain message (inject.js resets the count on each new message); the rest goes to explorer subagents.
+//  5. First-mate budget: in chats run by the firstmate agent, each read tool call or command counts 1
+//     (command text is not parsed). After DIRECT_MAX the injected rules tell it to delegate; HARD_MAX denies.
+//  6. Parallel workers each get their own task workspace: one invoke_subagent may not send two workers
+//     into the same .firstmate/wt/<task>.
 // It is a safety net, not a sandbox: it reads the command text and can be fooled by obfuscation.
 // Fails open: any error → allow.
 
 const fs = require('fs');
 const path = require('path');
-const { STATE_DIR, PLUGIN_DIR, DIRECT_MAX, unwrap, loadState, saveState, agentOf, spendBudget } = require('./lib');
+const { STATE_DIR, PLUGIN_DIR, DIRECT_MAX, HARD_MAX, unwrap, loadState, saveState, agentOf, spendBudget } = require('./lib');
 
 const MAX_SAME_READ = 3;
 const MAX_READ_STREAK = 40;
@@ -26,6 +28,8 @@ const FREE_PATH_RE = /[\\/]\.firstmate[\\/](facts\.md|notes[\\/])/;
 // Commands that change files: redirects into a file, in-place edits, moves, deletes, copies and git changes.
 const WRITE_CMD_RE = /(^|[^\w>&-])(\d?>>?|&>)\s*(?!\/dev\/null\b|&\d)[^\s|;&]|\b(sed|perl)\s+(-\w*\s+)*-i|\b(rm|mv|cp|tee|truncate|chmod|chown|ln|mkdir|touch|rsync)\s|\bgit\s+(\S+\s+)*?(checkout|reset|commit|add|stash|clean|restore|apply|merge|rebase|push|cherry-pick|rm|mv)\b|\b(npm|yarn|pnpm|pip|pip3)\s+(install|i|add|remove|uninstall)\b/;
 const FM_CALL_RE = /\bbash\s+\S*flash-ultra[\\/]scripts[\\/]fm\.sh\b/g;
+// one call of the plugin's own fm.sh with its arguments, up to the next separator (installed or repo copy)
+const FM_SCRIPT_RE = new RegExp(`\\bbash\\s+(\\S*flash-ultra|${PLUGIN_DIR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})[\\\\/]scripts[\\\\/]fm\\.sh\\b[^&;|\\n]*`, 'g');
 
 const out = (obj) => { process.stdout.write(JSON.stringify(obj)); process.exit(0); };
 const allow = () => out({ decision: 'allow' });
@@ -66,8 +70,9 @@ function sub(w, valueFlags) {
 }
 
 const KUBE_FLAGS = new Set(['-n', '--namespace', '--context', '--kubeconfig', '--cluster', '--user', '-s', '--server', '--as', '--token', '--request-timeout']);
-const KUBE_DENY = new Set(['apply', 'create', 'delete', 'edit', 'patch', 'replace', 'scale', 'autoscale', 'set', 'label', 'annotate', 'drain', 'cordon', 'uncordon', 'taint', 'expose', 'certificate']);
-const KUBE_ASK = new Set(['cp', 'debug', 'run', 'attach']);
+// kubectl: agents only read the cluster; every change goes through GitOps. Anything not on this list is denied.
+const KUBE_READ = new Set(['get', 'describe', 'logs', 'top', 'events', 'explain', 'api-resources', 'api-versions', 'version', 'cluster-info']);
+const KUBE_READ_SUB = { config: ['view', 'get-contexts', 'current-context', 'get-clusters'], auth: ['can-i', 'whoami'], rollout: ['status', 'history'] };
 const HELM_DENY = new Set(['install', 'upgrade', 'uninstall', 'delete', 'rollback', 'push']);
 const HELMFILE_DENY = new Set(['apply', 'sync', 'destroy', 'delete', 'deps']);
 const TF_DENY = new Set(['apply', 'destroy', 'import', 'taint', 'untaint', 'force-unlock']);
@@ -92,10 +97,9 @@ function judge(seg) {
     if (s(new Set(['-C', '-c', '--git-dir', '--work-tree'])).name === 'push') return deny('pushes to the remote');
   } else if (p === 'kubectl' || p === 'oc') {
     const { name, rest } = s(KUBE_FLAGS);
-    if (name === 'rollout') return ['status', 'history'].includes(rest.find((x) => !x.startsWith('-'))) ? null : deny('changes a rollout');
-    if (KUBE_DENY.has(name)) return deny('changes the cluster');
-    if (KUBE_ASK.has(name)) return ask('creates or writes to a pod');
-    if (name === 'exec' && PROD_RE.test(seg)) return ask('opens a shell or runs a command inside a production pod');
+    if (!name || KUBE_READ.has(name)) return null;
+    if (KUBE_READ_SUB[name] && KUBE_READ_SUB[name].includes(rest.find((x) => !x.startsWith('-')))) return null;
+    return deny(`is not a read (agents may only run kubectl ${[...KUBE_READ].join(', ')}, config view, auth can-i, rollout status; changes, exec and port-forward go through GitOps or the captain)`);
   } else if (p === 'helm') {
     if (HELM_DENY.has(s(new Set(['-n', '--namespace', '--kube-context', '--kubeconfig'])).name)) return deny('changes a Helm release');
   } else if (p === 'helmfile') {
@@ -161,6 +165,20 @@ function mcpPolicy(tool, args, agent) {
   return { decision: 'force_ask', reason: `[guard] ${label} ${kind === 'change' ? 'changes data or infrastructure' : 'is not a recognised read'}; the captain must approve it.` };
 }
 
+// The task workspace two or more parallel workers in one invoke_subagent call would share, or ''.
+function sharedTask(args) {
+  if (!Array.isArray(args.Subagents)) return '';
+  const seen = new Set();
+  for (const s of args.Subagents) {
+    if (!s || String(s.TypeName) !== 'worker') continue;
+    const m = String(s.Prompt || s.prompt || '').match(/\.firstmate[\\/]+wt[\\/]+([a-z0-9][a-z0-9-]*)/);
+    if (!m) continue;
+    if (seen.has(m[1])) return m[1];
+    seen.add(m[1]);
+  }
+  return '';
+}
+
 function commandPolicy(cmd) {
   for (const seg of cmd.split(/&&|\|\||;|\||\n|`|\$\(/)) {
     const d = judge(seg);
@@ -212,6 +230,8 @@ function main() {
     const n = Array.isArray(args.Subagents) ? args.Subagents.length : 1;
     if (st.subagents + n > MAX_SUBAGENTS) {
       decision = { decision: 'deny', reason: `[guard] This chat already launched ${st.subagents} subagents (cap ${MAX_SUBAGENTS} per day). Report what you have to the captain and ask before launching more.` };
+    } else if (sharedTask(args)) {
+      decision = { decision: 'deny', reason: `[guard] Two or more workers in this call share the task workspace .firstmate/wt/${sharedTask(args)}. Give each independent part its own task (fm.sh start <repo> <task> once per part), then send one worker per task.` };
     } else {
       st.subagents += n;
       if (Array.isArray(args.Subagents)) {
@@ -232,12 +252,13 @@ function main() {
   // and every other command segment counts (so chaining a free command does not hide a read).
   if (agent === 'firstmate' && (READ_TOOLS.has(tool) || tool === 'run_command')) {
     const freePath = (s) => FREE_PATH_RE.test(s) || s.includes(PLUGIN_DIR);
+    // One call costs 1, whatever the command looks like; only plugin-script and free-path calls are free.
+    const rest = tool === 'run_command' ? cmd.replace(FM_SCRIPT_RE, '').replace(/\bcd\s+\S+/g, '') : '';
     const cost = tool === 'run_command'
-      ? cmd.split(/&&|\|\||;|\||\n/).map((x) => x.trim())
-        .filter((x) => x && !/^cd\s/.test(x) && !new RegExp(FM_CALL_RE.source).test(x) && !freePath(x)).length
+      ? (rest.replace(/[&;|\s]+/g, '') && !freePath(rest) ? 1 : 0)
       : (freePath(target || JSON.stringify(args)) ? 0 : 1);
-    if (cost > 0 && spendBudget(convoId, cost) > DIRECT_MAX) {
-      decision = { decision: 'deny', reason: `[firstmate budget] You already used your ${DIRECT_MAX} direct reads/commands for this captain message. Send the rest to explorer subagents (one invoke_subagent call, TypeName "explorer", each with one angle) and read their reports; or answer with what you have and list what is not verified.` };
+    if (cost > 0 && spendBudget(convoId, cost) > HARD_MAX) {
+      decision = { decision: 'deny', reason: `[firstmate budget] ${HARD_MAX} direct reads/commands for one captain message is the hard stop. Send the rest to explorer subagents (one invoke_subagent call, TypeName "explorer", each with one angle), or answer with what you have and list what is not verified.` };
     }
   }
 
@@ -248,8 +269,8 @@ function main() {
       // record the call shape (tool name and argument keys, no values) so a live run shows the real schema
       try { fs.appendFileSync(path.join(STATE_DIR, 'mcp.log'), `${new Date().toISOString()} ${convo} ${agent || '-'} ${tool} ${t.name || '?'} keys=${Object.keys(args).join(',')}\n`); } catch {}
       // the first mate's MCP reads count toward its budget like any other read
-      if (agent === 'firstmate' && mcpKind(t.name) === 'read' && spendBudget(convoId, 1) > DIRECT_MAX) {
-        decision = { decision: 'deny', reason: `[firstmate budget] You already used your ${DIRECT_MAX} direct reads/commands for this captain message. Send MCP reading to explorer subagents too.` };
+      if (agent === 'firstmate' && mcpKind(t.name) === 'read' && spendBudget(convoId, 1) > HARD_MAX) {
+        decision = { decision: 'deny', reason: `[firstmate budget] ${HARD_MAX} direct reads/commands for one captain message is the hard stop. Send MCP reading to explorer subagents too.` };
       }
     }
     const m = decision.decision === 'allow' ? mcpPolicy(tool, args, agent) : null;
