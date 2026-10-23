@@ -73,6 +73,9 @@ function install() {
     throw new Error(`${node} has no node:sqlite; the hooks need Node.js 22.13 or newer (found ${(() => { try { return require('child_process').execFileSync(node, ['--version'], { encoding: 'utf8' }).trim(); } catch { return 'unknown'; } })()})`);
   }
 
+  // Windows hook commands carry the plugin path unquoted (see below), so it cannot have a space.
+  if (WIN && TARGET.includes(' ')) throw new Error(`${TARGET} has a space; Windows hook commands cannot quote the plugin path`);
+
   if (fs.existsSync(TARGET)) {
     const backup = path.join(os.tmpdir(), `${NAME}-backup-${stamp()}`);
     unlock(TARGET);
@@ -90,8 +93,10 @@ function install() {
     if (isDir || !TEMPLATED_EXT.has(path.extname(f))) return;
     let text = fs.readFileSync(f, 'utf8');
     if (!text.includes('{{')) return;
-    // Windows hook commands: plain `node` from PATH, and no `|| echo` fallback (Windows PowerShell 5.1 has no ||)
-    if (WIN && path.basename(f) === 'hooks.json') text = text.replaceAll('\\"{{NODE}}\\"', 'node').replace(/ \|\| echo '[^']*'/g, '');
+    // Windows hook commands: plain `node` from PATH, unquoted script paths (the App passes the quotes
+    // through to node, which then resolves `"C:/..."` as a relative path), and no `|| echo` fallback
+    // (Windows PowerShell 5.1 has no ||)
+    if (WIN && path.basename(f) === 'hooks.json') text = text.replaceAll('\\"{{NODE}}\\"', 'node').replace(/\\"({{PLUGIN_DIR}}[^"\\]*)\\"/g, '$1').replace(/ \|\| echo '[^']*'/g, '');
     fs.writeFileSync(f, text.replaceAll('{{PLUGIN_DIR}}', dir).replaceAll('{{NODE}}', node.split(path.sep).join('/')));
   });
   lock(TARGET);
