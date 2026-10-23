@@ -73,6 +73,31 @@ CASES
 check "explorer write tool" deny "$(guard ex write_to_file '{"TargetFile":"/x/a.ts"}')"
 check "worker may write" allow "$(guard wk write_to_file '{"TargetFile":"/x/a.ts"}')"
 
+echo "== guard: MCP tools (read verbs pass; the rest asks the captain; explorers are denied)"
+mcp() { guard "$1" call_mcp_tool "{\"ServerName\":\"$2\",\"ToolName\":\"$3\",\"Arguments\":{},\"toolAction\":\"Delete the export\",\"toolSummary\":\"Delete export\"}"; }
+for t in list_buckets get_bucket_metadata read_text read_object search_documents answer_query execute_sql_readonly execute_sql_read_only get_query_results lookup_entry describe_instance listBuckets getObjectMetadata; do
+  check "mcp read: $t" allow "$(mcp plain some-server "$t")"
+done
+for t in download_object set_read_only delete_readonly_replica delete_object delete_bucket write_text execute_sql restore_backup update_database_schema commit send_message merge_pull_request push_files add_issue_comment deleteObject delete-object run_query create_session; do
+  check "mcp change asks: $t" force_ask "$(mcp plain some-server "$t")"
+  check "mcp change denied for explorer: $t" deny "$(mcp ex some-server "$t")"
+done
+check "mcp unknown verb asks" force_ask "$(mcp plain some-server frobnicate)"
+check "structure viewer is exempt" allow "$(mcp plain science_biomolecular_structure_viewer_mcp remove_annotation)"
+check "native mcp read tool" allow "$(guard plain mcp_gemini-api_gemini-api-docs_gemini_search_docs '{"query":"x"}')"
+check "native mcp delete tool asks" force_ask "$(guard plain mcp_data-agent-kit-plugin_dak-bigtable_delete_table '{}')"
+check "other arg key names" force_ask "$(guard plain call_mcp_tool '{"server_name":"dak-gcs","tool_name":"delete_object"}')"
+check "mcp calls are logged with keys" 1 "$(grep -c "call_mcp_tool list_buckets keys=ServerName,ToolName,Arguments,toolAction,toolSummary" "$FM_STATE_DIR/mcp.log")"
+check "toolSummary text is not taken as the tool name" allow "$(guard plain call_mcp_tool '{"toolSummary":"Delete old files","ServerName":"x","ToolName":"list_objects"}')"
+
+echo "== agent manifests: every tool name is one the App accepts"
+KNOWN="view_file list_dir grep_search find_by_name run_command write_to_file replace_file_content multi_replace_file_content invoke_subagent manage_subagents send_message ask_question manage_task search_web read_url_content"
+for f in "$P"/agents/*.md; do
+  for t in $(ruby -ryaml -e 'puts Array(YAML.safe_load(File.read(ARGV[0],encoding:"UTF-8").split(/^---\s*$/)[1])["tools"])' "$f"); do
+    case " $KNOWN " in *" $t "*) ok ;; *) bad "unknown tool '$t' in $(basename "$f")" ;; esac
+  done
+done
+
 echo "== guard: subagents pinned to Flash"
 OUT=$(node -e 'process.stdout.write(JSON.stringify({conversationId:"pin",toolCall:{name:"invoke_subagent",args:{Subagents:[{TypeName:"explorer",Model:"inherit"},{TypeName:"worker"}]}}}))' | node "$GUARD" 2>/dev/null)
 check "explorer+worker pinned" 2 "$(grep -o '"Model":"flash"' <<< "$OUT" | wc -l | tr -d ' ')"
@@ -119,11 +144,41 @@ echo "== context hooks"
 mkdir -p "$T/my repo" && (cd "$T/my repo" && git init -q -b main && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m i)
 bash "$FM" init "$T/my repo" >/dev/null && bash "$FM" fact "$T/my repo" "Uses Fastify 5" >/dev/null
 check "fact dedupe" "already" "$(bash "$FM" fact "$T/my repo" "uses fastify 5" | grep -o already)"
+bash "$FM" fact "$T/my repo" "Uses Prisma" "uses fastify 5" "Deploys with PM2" >/dev/null
+check "several facts in one call, duplicates skipped" 3 "$(grep -c '^- ' "$T/my repo/.firstmate/facts.md")"
 SESSION=$(printf '{"conversationId":"fm","workspacePaths":["file://%s"]}' "$(sed 's/ /%20/g' <<< "$T/my repo")" | node "$INJECT" session 2>/dev/null)
 check "facts injected for a percent-encoded path" 1 "$(grep -c 'Uses Fastify 5' <<< "$SESSION")"
 RULES=$(printf '{"conversationId":"ex","invocationNum":0,"initialNumSteps":1}' | node "$INJECT" invoke 2>/dev/null)
 check "explorer gets its rules" 1 "$(grep -c 'explorer rules' <<< "$RULES")"
 check "default agent gets nothing" '{}' "$(printf '{"conversationId":"plain","invocationNum":0}' | node "$INJECT" invoke 2>/dev/null)"
+mkdir -p "$T/no repo"
+SESSION=$(printf '{"conversationId":"fm","workspacePaths":["file://%s"]}' "$(sed 's/ /%20/g' <<< "$T/no repo")" | node "$INJECT" session 2>/dev/null)
+check "a folder that is not a repo is reported as having no facts" 1 "$(grep -c 'not a git repo' <<< "$SESSION")"
+RULES=$(printf '{"conversationId":"fm","invocationNum":0,"initialNumSteps":1}' | node "$INJECT" invoke 2>/dev/null)
+check "first mate may pass skills: none" 1 "$(grep -c 'skills: none' <<< "$RULES")"
+check "first mate is not told to pass its own playbooks as skills" 0 "$(grep -c 'written deliverables → best' "$P/agents/firstmate.md")"
+
+echo "== fm.sh shape"
+B="$T/task one/best"; mkdir -p "$B"
+printf 'Brief\n```\ndeliverable: final.md words=20 covers=R1-R2 drafts=draft_*.md\n- deliverable: talk.md words=1.000 covers=R3\n```\n' > "$B/brief.md"
+printf '# Kế hoạch\n| --- | --- |\nmột hai ba bốn năm sáu bảy tám chín mười\n## Phần 2\n**Đơn** vị - 2.500 từ\n' > "$B/draft_1.md"
+seq 1 30 | tr '\n' ' ' > "$B/draft_2.md"
+SHAPE=$(bash "$FM" shape "$B/brief.md" --sections); RC=$?
+check "shape: a draft over the limit exits 1" 1 "$RC"
+check "shape: markdown symbols are not words, Vietnamese syllables are" 1 "$(grep -c 'OK     draft_1.md: 18 / 20 words' <<< "$SHAPE")"
+check "shape: over by more than 10%" 1 "$(grep -c 'OVER   draft_2.md: 30 / 20' <<< "$SHAPE")"
+check "shape: unwritten deliverables are listed" 2 "$(grep -c 'not written yet' <<< "$SHAPE")"
+check "shape: limits with a thousands separator" 1 "$(grep -c 'talk.md' <<< "$SHAPE")"
+check "shape: words per section" 1 "$(grep -cE '^ +6  ## Phần 2$' <<< "$SHAPE")"
+check "shape: one file only" "  OVER   draft_2.md: 30 / 20 words (+50%)" "$(bash "$FM" shape "$B/brief.md" draft_2.md | grep draft)"
+check "shape: one file only, the others are not counted" 0 "$(bash "$FM" shape "$B/brief.md" --sections draft_1.md >/dev/null; echo $?)"
+printf -- '- `deliverable: best/final.md words=20 covers=R1-R2 drafts=best/draft_*.md`\n**deliverable:** **talk.md** words=10\n' > "$B/brief2.md"
+SHAPE=$(bash "$FM" shape "$B/brief2.md")
+check "shape: best/ prefixes, backticks and bold are understood" 3 "$(grep -cE 'draft_1.md: 18|draft_2.md: 30|talk.md: not written' <<< "$SHAPE")"
+rm "$B/draft_2.md"
+bash "$FM" shape "$B/brief.md" >/dev/null; check "shape: all within limits exits 0" 0 $?
+rm "$B/draft_1.md"; check "shape: missing drafts are named" 1 "$(bash "$FM" shape "$B/brief.md" | grep -c 'draft_\*.md: no drafts yet')"
+printf 'no lines\n' > "$B/empty.md"; bash "$FM" shape "$B/empty.md" >/dev/null 2>&1; check "shape: a brief without deliverable lines is an error" 2 $?
 
 echo "== fm.sh workspace"
 R="$T/repo"; mkdir -p "$R/hf" "$R/plain/templates" "$R/svc/node_modules/pkg" "$R/docs dir"
@@ -148,6 +203,7 @@ bash "$FM" gate "$R" t1 'test -f svc/node_modules/pkg/index.js && grep -q SECRET
 check "gate with deps passes and leaves no junk" "" "$(git -C "$W" status --porcelain)"
 bash "$FM" deliver "$R" t1 >/dev/null 2>&1
 check "delivered uncommitted, spaces ok" 3 "$(git -C "$R" status --porcelain | wc -l | tr -d ' ')"
+check "delivery logged in notes" 1 "$(grep -c 'delivered task t1 to ft/x, uncommitted:' "$R/.firstmate/notes/log.md")"
 check "branches untouched" "ft/x main" "$(git -C "$R" branch --format='%(refname:short)' | sort | tr '\n' ' ' | sed 's/ $//')"
 git -C "$R" checkout -q -- .
 bash "$FM" start "$R" c1 >/dev/null; printf 'a\nTASK\nc\n' > "$R/.firstmate/wt/c1/conflict.txt"; bash "$FM" save "$R" c1 x >/dev/null; bash "$FM" gate "$R" c1 >/dev/null 2>&1

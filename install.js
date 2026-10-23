@@ -60,6 +60,12 @@ function install() {
   if (/\s/.test(TARGET) || /\s/.test(node)) {
     throw new Error(`paths with spaces are not supported by the hook command: ${TARGET} / ${node}`);
   }
+  // The hooks need node:sqlite (Node 22.13+). Without it they fail open and the guard would allow everything.
+  try {
+    require('child_process').execFileSync(node, ['-e', "require('node:sqlite')"], { stdio: 'ignore', timeout: 10000 });
+  } catch {
+    throw new Error(`${node} has no node:sqlite; the hooks need Node.js 22.13 or newer (found ${(() => { try { return require('child_process').execFileSync(node, ['--version'], { encoding: 'utf8' }).trim(); } catch { return 'unknown'; } })()})`);
+  }
 
   if (fs.existsSync(TARGET)) {
     const backup = path.join(os.tmpdir(), `${NAME}-backup-${stamp()}`);

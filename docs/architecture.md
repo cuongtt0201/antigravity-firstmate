@@ -48,7 +48,7 @@ flowchart TB
 | Explorer (`agents/explorer.md`) | Gemini Flash | Nothing | Read code, config and command output for one angle; report findings with `file:line` evidence and measured/inferred/guess labels |
 | Worker (`agents/worker.md`) | Gemini Flash | Only its task workspace | Make one change; report the check it ran and the evidence |
 | Checker (`agents/checker.md`) | Gemini Flash | Nothing | Compare a change with the original request; for code, run tests and adversarial inputs; for config, list impact and unknown keys |
-| `scripts/fm.sh` | n/a | Task worktrees and `refs/firstmate/*` | The model's own workspace: init, start, save, gate, deliver, status, clean |
+| `scripts/fm.sh` | n/a | Task worktrees and `refs/firstmate/*` | The model's own workspace: init, start, save, gate, deliver, status, clean; shape (word limits for /best) |
 | `hooks/guard.js` | n/a | n/a | PreToolUse hook on every tool call (see Safety), including the first mate's direct-read budget |
 | `hooks/inject.js` | n/a | n/a | SessionStart: injects `.firstmate/facts.md`. PreInvocation: injects each role's short rules before every model turn |
 
@@ -114,6 +114,8 @@ gitGraph
 | `terraform/terragrunt/tofu apply/destroy/import/taint/force-unlock`, `state rm/mv/push` | denied |
 | `gcloud … create/delete/update/deploy/resize/…iam…`, `gsutil rm/mv`, uploads and syncs to `gs://` | denied |
 | `git push` | denied |
+| MCP tools whose name is a read (get, list, read, search, describe, … or `*_readonly`) | allowed |
+| any other MCP tool (delete, create, update, execute_sql, send, push, merge, download, …, or an unknown verb such as query) | asks you every time; denied for explorers. Unknown verbs ask on purpose: safe by default |
 | `kubectl exec` into anything named prod, `kubectl cp/debug/run/attach`, `ssh`, `scp`, remote `rsync`, `gcloud compute ssh` | asks you every time |
 | Edits to the plugin or the hook config | denied |
 | More than 12 subagents in one chat per day | denied until you say so |
