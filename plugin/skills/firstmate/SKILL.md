@@ -1,6 +1,6 @@
 ---
 name: firstmate
-description: First-mate mode for everyday repo work (code, config, IaC, CI, incidents). Use when the user types /firstmate, or asks to understand, investigate or change a repo with Argon orchestrating. Each request goes to a playbook (quick, how, investigate, change); Flash explorers read, Flash workers edit, and changes are checked by code and delivered as uncommitted edits.
+description: First-mate mode for everyday repo work (code, config, IaC, CI, incidents). Use when the user types /firstmate, or asks to understand, investigate or change a repo with the main model orchestrating. Each request goes to a playbook (quick, how, investigate, change); Flash explorers read, Flash workers edit, and changes are checked by code and delivered as uncommitted edits.
 ---
 
 # /firstmate

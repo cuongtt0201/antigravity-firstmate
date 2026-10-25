@@ -4,7 +4,6 @@ const os = require('os');
 const path = require('path');
 
 const STATE_DIR = process.env.FM_STATE_DIR || path.join(os.tmpdir(), 'flash-ultra-loop-guard');
-const CONVO_DB = process.env.FM_CONVO_DB || path.join(os.homedir(), '.gemini', 'antigravity', 'conversation_summaries.db');
 const BRAIN_DIR = process.env.FM_BRAIN_DIR || path.join(os.homedir(), '.gemini', 'antigravity', 'brain');
 const STATE_TTL_MS = 24 * 60 * 60 * 1000;
 const PLUGIN_DIR = path.resolve(__dirname, '..');
@@ -31,14 +30,20 @@ function loadState(id) {
   return {};
 }
 
-// Write to a temp file and rename, so a concurrent reader never sees a half-written file.
+// Write to a temp file and rename, so a concurrent reader never sees a half-written file. State is best
+// effort: on Windows a rename over a file another hook is reading fails with EPERM, and an error here must
+// not reach the hook's fail-open catch, which would turn a deny into an allow. So retry, then drop the write.
 function saveState(id, st) {
   st.t = Date.now();
-  fs.mkdirSync(STATE_DIR, { recursive: true });
   const file = stateFile(id, 'json');
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(st));
-  fs.renameSync(tmp, file);
+  try {
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify(st));
+    for (let i = 0; ; i++) {
+      try { fs.renameSync(tmp, file); return; } catch (e) { if (i >= 5 || !['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) throw e; }
+    }
+  } catch { try { fs.rmSync(tmp, { force: true }); } catch {} }
 }
 
 function budgetLog(id, what) {
@@ -87,28 +92,45 @@ function lastUserStep(id, ev) {
   return undefined;
 }
 
+// Conversation indexes to look in: the one next to the chat's own artifact folder (App or CLI, from the hook
+// payload), then the App's and the CLI's. FM_CONVO_DB pins a single index (tests).
+function convoDbs(ev) {
+  if (process.env.FM_CONVO_DB) return [process.env.FM_CONVO_DB];
+  const home = path.join(os.homedir(), '.gemini');
+  const dbs = [];
+  const art = ev && ev.artifactDirectoryPath;
+  if (art) dbs.push(path.join(path.dirname(path.dirname(String(art))), 'conversation_summaries.db'));
+  for (const d of ['antigravity', 'antigravity-cli']) dbs.push(path.join(home, d, 'conversation_summaries.db'));
+  return [...new Set(dbs.map((d) => path.resolve(d)))];
+}
+
 // The agent a chat runs (firstmate, worker, explorer, checker, or '' for the default agent), read from
-// the App's conversation index. The App indexes a chat only after its first model call and may write the
-// row before it fills in the agent name. So: a named agent is cached; a missing row, or an empty name on a
-// chat with at most 3 steps, counts as a first mate when the model is Argon and is not cached; an empty
-// name on an older chat is cached as 'none' and rechecked after a minute.
+// the conversation index. A chat is indexed only after its first model call and the row may come before
+// the agent name. So: a named agent is cached; a missing row, or an empty name on a chat with at most 3
+// steps, counts as a first mate when the chat runs on a main model (anything but Flash, which is the crew's)
+// and is not cached; an empty name on an older chat is cached as 'none' and rechecked after a minute.
+// A first mate the captain runs on Flash is found by name once the chat is indexed.
 const NONE_RECHECK_MS = 60 * 1000;
 const YOUNG_CHAT_STEPS = 3;
-function agentOf(id, st, model) {
+function agentOf(id, st, model, ev) {
   if (st.agent === 'none' && Date.now() - (st.agentAt || 0) > NONE_RECHECK_MS) delete st.agent;
   if (st.agent) return st.agent === 'none' ? '' : st.agent;
-  const argon = /argon/i.test(String(model || ''));
+  const main = !!model && !/flash/i.test(String(model));
   if (!id) return '';
   let row;
-  try {
-    const { DatabaseSync } = require('node:sqlite');
-    const db = new DatabaseSync(CONVO_DB, { readOnly: true });
-    row = db.prepare('select agent_name, step_count from conversation_summaries where conversation_id = ?').get(String(id));
-    db.close();
-  } catch {}
-  if (!row) return argon ? 'firstmate' : '';
+  for (const file of convoDbs(ev)) {
+    try {
+      if (!fs.existsSync(file)) continue;
+      const { DatabaseSync } = require('node:sqlite');
+      const db = new DatabaseSync(file, { readOnly: true });
+      row = db.prepare('select agent_name, step_count from conversation_summaries where conversation_id = ?').get(String(id));
+      db.close();
+    } catch {}
+    if (row) break;
+  }
+  if (!row) return main ? 'firstmate' : '';
   if (row.agent_name) { st.agent = row.agent_name; return st.agent; }
-  if (Number(row.step_count) <= YOUNG_CHAT_STEPS) return argon ? 'firstmate' : '';
+  if (Number(row.step_count) <= YOUNG_CHAT_STEPS) return main ? 'firstmate' : '';
   st.agent = 'none'; st.agentAt = Date.now();
   return '';
 }

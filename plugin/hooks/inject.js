@@ -22,8 +22,8 @@ const ROLE_RULES = {
     '5. Skills: in every brief write skills: with 0 to 3 skills from your <skills> list that fit the subagent\'s task, or skills: none. Never pass best, how, investigate, change or firstmate (your own playbooks). Name the skills used in your answer. Subagents run in the background: keep working while they run, never poll, and for a fix round message the same (idle) subagent instead of starting a new one.',
   ].join('\n'),
   explorer: () => '[explorer rules] Read only. Every finding cites path:line or the exact command and output, labelled measured / inferred / guess (numbers only from a command). Read error paths too. Use the skills in your brief, or one from <skills> that fits. Finish with the EXPLORER REPORT format, including SKILLS USED.',
-  worker: () => '[worker rules] Write only inside the task workspace named in your brief (for /best: inside best/, scratch in best/tmp/, deleted before you report). No git commit or push, nothing that changes live systems. With a word limit: write one section at a time with the file tools, run the shape command after each, shorten only the sections that are over, at most 2 passes, then report ISSUES with the shape line; never build prose from a script. Use the skills in your brief, or one from <skills> that fits. Finish with the WORKER REPORT format, including CHECK, EVIDENCE and SKILLS USED.',
-  checker: () => '[checker rules] Compare against the original request, not the plan. First line VERDICT: PASS, ISSUES (every provable defect, with evidence) or BLOCKED. Never PASS what you could not check.',
+  worker: () => '[worker rules] Write only inside the task workspace named in your brief (for /best: inside best/, scratch in best/tmp/, deleted before you report). No git commit or push, nothing that changes live systems. Repo change: fm.js save, then fm.js gate yourself; fix and gate again, at most 3 gates, and report the last gate line. With a word limit: write one section at a time with the file tools, run the shape command after each, shorten only the sections that are over, at most 2 passes, then report ISSUES with the shape line; never build prose from a script. Use the skills in your brief, or one from <skills> that fits. Finish with the WORKER REPORT format: CHECK, ASSUMPTIONS, NOT DONE, QUESTIONS; do not describe a repo change line by line.',
+  checker: () => '[checker rules] Compare against the original request, not the plan. Run every scenario S1..Sn in your brief first and report each PASS, FAIL or BLOCKED with the real output, then add your own checks. First line VERDICT: PASS, ISSUES (every provable defect, with evidence) or BLOCKED. Never PASS what you could not check.',
 };
 
 function mainCheckout(dir) {
@@ -63,7 +63,7 @@ function main() {
     if (msg) steps.push({ systemMessage: { systemMessage: msg } });
   } else if (mode === 'invoke') {
     const st = loadState(id);
-    const agent = agentOf(id, st, ev.modelName);
+    const agent = agentOf(id, st, ev.modelName, ev);
     if (agent === 'firstmate') {
       // The budget is per captain message: reset when the transcript shows a new USER_INPUT step.
       // Without a readable transcript, fall back to a new execution (invocationNum back to 0; a missing

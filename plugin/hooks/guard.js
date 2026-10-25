@@ -9,6 +9,7 @@
 //     (command text is not parsed). After DIRECT_MAX the injected rules tell it to delegate; HARD_MAX denies.
 //  6. Parallel workers each get their own task workspace: one invoke_subagent may not send two workers
 //     into the same .firstmate/wt/<task>.
+//  7. The crew may run fm.js save and gate, but may not write gate results, notes, facts or task refs itself.
 // It is a safety net, not a sandbox: it reads the command text and can be fooled by obfuscation.
 // Fails open: any error → allow.
 
@@ -25,6 +26,8 @@ const WRITE_TOOLS = new Set(['write_file', 'edit_file', 'write_to_file', 'replac
 const PROTECTED_RE = /\.gemini[\\/]+config[\\/]+(plugins[\\/]+flash-ultra|hooks\.json|config\.json)|flash-ultra[\\/]+(hooks|agents|plugin\.json)|guard\.js/;
 // Paths the first mate may read without spending budget: its facts file and its notes (not task workspaces).
 const FREE_PATH_RE = /[\\/]\.firstmate[\\/](facts\.md|notes[\\/])/;
+// Records that delivery trusts and only fm.js writes: gate results and notes, and facts.md.
+const RECORD_RE = /[\\/]\.firstmate[\\/](facts\.md|notes([\\/]|\b))/;
 // Commands that change files: redirects into a file, in-place edits, moves, deletes, copies and git changes.
 const WRITE_CMD_RE = /(^|[^\w>&-])(\d?>>?|&>)\s*(?!\/dev\/null\b|&\d)[^\s|;&]|\b(sed|perl)\s+(-\w*\s+)*-i|\b(rm|mv|cp|tee|truncate|chmod|chown|ln|mkdir|touch|rsync)\s|\bgit\s+(\S+\s+)*?(checkout|reset|commit|add|stash|clean|restore|apply|merge|rebase|push|cherry-pick|rm|mv)\b|\b(npm|yarn|pnpm|pip|pip3)\s+(install|i|add|remove|uninstall)\b/;
 // The plugin's workspace script, `node "<plugin>/scripts/fm.js"` (or the old `bash .../fm.sh`), installed or repo copy.
@@ -249,7 +252,7 @@ function main() {
 
   const target = pick(args, ['Path', 'AbsolutePath', 'TargetFile', 'filePath', 'path', 'DirectoryPath', 'SearchPath']);
 
-  const agent = decision.decision === 'allow' ? agentOf(convoId, st, ev.modelName || p.modelName) : '';
+  const agent = decision.decision === 'allow' ? agentOf(convoId, st, ev.modelName || p.modelName, ev) : '';
 
   // First-mate budget. Its facts, notes, the plugin's playbooks and fm.js are free; every other read
   // and every other command segment counts (so chaining a free command does not hide a read).
@@ -285,6 +288,15 @@ function main() {
   if (agent === 'explorer') {
     if (WRITE_TOOLS.has(tool) || (tool === 'run_command' && WRITE_CMD_RE.test(cmd))) {
       decision = { decision: 'deny', reason: '[guard] Explorers are read-only: no file edits, redirects into files, moves, deletes or git changes. Report what you would change under OPEN QUESTIONS instead.' };
+    }
+  }
+  // The crew runs fm.js (save, gate) but never writes the records delivery trusts by hand: gate results
+  // and notes, facts.md, and the task refs.
+  if (/^(worker|checker|explorer)$/.test(agent) && decision.decision === 'allow') {
+    const rest = tool === 'run_command' ? cmd.replace(FM_SCRIPT_RE, '') : '';
+    if ((WRITE_TOOLS.has(tool) && RECORD_RE.test(target)) ||
+        (tool === 'run_command' && ((RECORD_RE.test(rest) && WRITE_CMD_RE.test(rest)) || /\bupdate-ref\b|refs\/firstmate\//.test(rest)))) {
+      decision = { decision: 'deny', reason: '[guard] Gate results, notes, facts and task refs are written only by fm.js. Run fm.js save and fm.js gate; do not edit .firstmate/notes, facts.md or refs/firstmate by hand.' };
     }
   }
   if (WRITE_TOOLS.has(tool)) {

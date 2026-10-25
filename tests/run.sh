@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for the plugin's code: guard policy, first-mate budget, context hooks, fm.js workspace.
+# Regression tests for the plugin's code: guard policy, first-mate budget, context hooks, fm.js workspace and review.
 #   bash tests/run.sh
 # Needs git, node (with node:sqlite) and bash (Git Bash on Windows); helm and terraform are optional. Runs in a temp dir,
 # never touches ~/.gemini or the real hook state.
@@ -8,6 +8,8 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WIN=; [ "$(uname -s | cut -c1-5)" = MINGW ] && WIN=1 && ROOT=$(cygpath -m "$ROOT")
 P="$ROOT/plugin"; FMJS="$P/scripts/fm.js"; GUARD="$P/hooks/guard.js"; INJECT="$P/hooks/inject.js"
 T=$(mktemp -d); [ -n "$WIN" ] && T=$(cygpath -m "$T"); trap 'rm -rf "$T"' EXIT
+# git must not find a repo above the temp dir (for example a home folder that is itself a repo)
+export GIT_CEILING_DIRECTORIES=$(dirname "$T")
 export FM_STATE_DIR="$T/state" FM_CONVO_DB="$T/convos.db" FM_BRAIN_DIR="$T/brain" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 fm() { node "$FMJS" "$@"; }
 PASS=0; FAIL=0
@@ -15,7 +17,7 @@ ok()  { PASS=$((PASS + 1)); }
 bad() { FAIL=$((FAIL + 1)); echo "FAIL: $*"; [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error title=test::$(printf %s "$*" | tr -d '\r' | head -c 300)"; return 0; }
 check() { if [ "$2" = "$3" ]; then ok; else bad "$1 (want '$2', got '$3')"; fi; }
 
-node -e "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1]);d.exec('create table conversation_summaries(conversation_id text, agent_name text, step_count integer)');d.exec(\"insert into conversation_summaries values('fm','firstmate',50),('ex','explorer',50),('wk','worker',50),('plain','',50),('young','',2)\")" "$FM_CONVO_DB" 2>/dev/null
+node -e "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1]);d.exec('create table conversation_summaries(conversation_id text, agent_name text, step_count integer)');d.exec(\"insert into conversation_summaries values('fm','firstmate',50),('ex','explorer',50),('wk','worker',50),('plain','',50),('young','',2),('flashfm','firstmate',50)\")" "$FM_CONVO_DB" 2>/dev/null
 
 # guard <convo> <tool> <args-json>  → prints the decision
 guard() { node -e 'process.stdout.write(JSON.stringify({conversationId:process.argv[1],toolCall:{name:process.argv[2],args:JSON.parse(process.argv[3])}}))' "$1" "$2" "$3" | node "$GUARD" 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).decision))'; }
@@ -118,6 +120,15 @@ two() { node -e 'process.stdout.write(JSON.stringify({conversationId:"two",toolC
 check "two workers in one task workspace are refused" deny "$(two infra infra)"
 check "one worker per task workspace is fine" allow "$(two infra-tf infra-docs)"
 
+echo "== guard: the crew cannot forge gate results"
+check "worker may run fm.js save and gate" allow "$(guard wk run_command "$(cmdjson "cd /r/.firstmate/wt/t && node \"$FMJS\" save /r t x && node \"$FMJS\" gate /r t 'npm test'")")"
+check "worker may write in its task workspace" allow "$(guard wk write_to_file '{"TargetFile":"/r/.firstmate/wt/t/src/a.js"}')"
+check "worker may not write a gate result" deny "$(guard wk write_to_file '{"TargetFile":"/r/.firstmate/notes/t.gate"}')"
+check "worker may not redirect into notes" deny "$(guard wk run_command "$(cmdjson "echo abc PASS > /r/.firstmate/notes/t.gate")")"
+check "worker may not move task refs" deny "$(guard wk run_command "$(cmdjson "git -C /r update-ref refs/firstmate/t/head abc")")"
+check "worker may not edit facts.md" deny "$(guard wk replace_file_content '{"TargetFile":"/r/.firstmate/facts.md"}')"
+check "worker may read notes" allow "$(guard wk view_file '{"AbsolutePath":"/r/.firstmate/notes/t.gate.log"}')"
+
 echo "== first-mate budget"
 spend() { for i in $(seq 1 "$2"); do guard fm view_file "{\"AbsolutePath\":\"/x/$1$i.ts\"}" >/dev/null; done; }
 invoke fm 0 1
@@ -165,6 +176,12 @@ node -e "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(pr
 check "...and is recognised once the App names it" 1 "$(printf '{"conversationId":"young","invocationNum":1,"modelName":"gemini-4-argon-medium"}' | node "$INJECT" invoke 2>/dev/null | grep -c 'firstmate rules')"
 check "older default-agent chat on Argon gets nothing" '{}' "$(printf '{"conversationId":"plain","invocationNum":0,"modelName":"gemini-4-argon-medium"}' | node "$INJECT" invoke 2>/dev/null)"
 check "unindexed Flash chat gets nothing" '{}' "$(printf '{"conversationId":"newchat2","invocationNum":0,"modelName":"gemini-3.8-flash"}' | node "$INJECT" invoke 2>/dev/null)"
+check "unindexed Claude chat gets first-mate rules" 1 "$(printf '{"conversationId":"newchat3","invocationNum":0,"modelName":"claude-sonnet-5-5-medium"}' | node "$INJECT" invoke 2>/dev/null | grep -c 'firstmate rules')"
+check "a first mate the captain runs on Flash is found by name" 1 "$(printf '{"conversationId":"flashfm","invocationNum":0,"modelName":"gemini-3.8-flash-medium"}' | node "$INJECT" invoke 2>/dev/null | grep -c 'firstmate rules')"
+mkdir -p "$T/home/.gemini/antigravity-cli/brain/clichat"
+node -e "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1]);d.exec('create table conversation_summaries(conversation_id text, agent_name text, step_count integer)');d.exec(\"insert into conversation_summaries values('clichat','explorer',50)\")" "$T/home/.gemini/antigravity-cli/conversation_summaries.db" 2>/dev/null
+CLI=$(printf '{"conversationId":"clichat","invocationNum":0,"modelName":"gemini-3.8-flash","artifactDirectoryPath":"%s"}' "$T/home/.gemini/antigravity-cli/brain/clichat" | env -u FM_CONVO_DB HOME="$T/home" USERPROFILE="$T/home" node "$INJECT" invoke 2>/dev/null)
+check "the index next to the chat's artifact folder is read (CLI chats)" 1 "$(grep -c 'explorer rules' <<< "$CLI")"
 check "worker has no budget" allow "$(for i in $(seq 1 8); do guard wk view_file "{\"AbsolutePath\":\"/x/w$i.ts\"}"; done | tail -c 5)"
 
 echo "== context hooks"
@@ -248,6 +265,44 @@ git -C "$R" rm -q gone.txt; git -C "$R" -c user.name=t -c user.email=t@t commit 
 fm deliver "$R" f1 >/dev/null 2>&1; check "unappliable task: error" 2 $?
 check "unappliable task: nothing changed" "" "$(git -C "$R" status --porcelain)"
 check "unappliable task: kept" 1 "$(fm status "$R" | grep -c 'f1 |')"
+
+echo "== fm.js review"
+V="$T/rv"; mkdir -p "$V/src" "$V/chart"
+(cd "$V" && git init -q -b main
+ printf 'function toCents(a) {
+  return Math.round(a * 100);
+}
+module.exports = { toCents };
+' > src/money.js
+ printf "const { toCents } = require('./money');
+module.exports = (p) => toCents(p);
+" > src/invoice.js
+ printf 'memory: 512Mi
+' > chart/values.yaml; printf 'memory: 512Mi
+' > chart/values-prod.yaml
+ git add -A && git -c user.name=t -c user.email=t@t commit -qm base)
+fm init "$V" >/dev/null; fm start "$V" r1 >/dev/null; VW="$V/.firstmate/wt/r1"
+printf 'function toCents(a) {
+  return Math.round((a + Number.EPSILON) * 100);
+}
+module.exports = { toCents };
+' > "$VW/src/money.js"
+printf 'memory: 1Gi
+' > "$VW/chart/values-prod.yaml"
+fm save "$V" r1 x >/dev/null
+REV=$(fm review "$V" r1 2>&1)
+check "review before the gate says so" 1 "$(grep -c 'gate not run' <<< "$REV")"
+check "review lists the unchanged caller of a changed function" 1 "$(grep -cF 'src/invoice.js:2  [unchanged]' <<< "$REV")"
+check "review lists the environment left unchanged" 1 "$(grep -cx '  chart/values.yaml' <<< "$REV")"
+check "review picks the checklists for values and code" 2 "$(grep -cE '^- (Helm values|Code):' <<< "$REV")"
+fm gate "$V" r1 >/dev/null 2>&1
+check "review shows the gate result" 1 "$(fm review "$V" r1 2>&1 | grep -c 'gate PASS')"
+for i in $(seq 1 300); do echo "line $i"; done > "$VW/big.txt"; fm save "$V" r1 big >/dev/null
+check "review after a later save calls the gate stale" 1 "$(fm review "$V" r1 2>&1 | grep -c 'gate stale')"
+check "review trims a long diff per file" 1 "$(fm review "$V" r1 2>&1 | grep -c 'more lines in big.txt')"
+check "review --full does not trim" 0 "$(fm review "$V" r1 --full 2>&1 | grep -c 'more lines in')"
+echo x >> "$VW/src/invoice.js"; fm review "$V" r1 >/dev/null 2>&1
+check "review refuses unsaved changes" 2 $?
 
 if [ "$(uname -s | cut -c1-5)" != MINGW ]; then
   check "old fm.sh entry point still works" 0 "$(bash "$P/scripts/fm.sh" status "$R" >/dev/null 2>&1; echo $?)"

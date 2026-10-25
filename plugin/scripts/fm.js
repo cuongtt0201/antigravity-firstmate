@@ -6,6 +6,7 @@
 //   fm.js start   <repo> <task>              detached worktree at <repo>/.firstmate/wt/<task>
 //   fm.js save    <repo> <task> "<message>"  commit the task's changes inside the task
 //   fm.js gate    <repo> <task> [command]    run checks (auto-detected, or the given command)
+//   fm.js review  <repo> <task> [--full]     diff, uses of the changed names, related unchanged files, checklist
 //   fm.js deliver <repo> <task> [--keep]     apply the task diff to the captain's checkout, uncommitted
 //   fm.js status  <repo>
 //   fm.js clean   <repo> <task|--all>
@@ -326,8 +327,130 @@ function clean(repoArg, which) {
   git(r, ['worktree', 'prune']);
 }
 
+// ---------- review ----------
+// What the first mate reads once before it judges a change: the diff (trimmed per file), who else uses what
+// changed, related files left unchanged, and a checklist for the kinds of files touched. It finds uses by
+// name with git grep, so calls through variables, reflection or built-up names are not seen.
+const REVIEW_MAX_LINES = 150;
+const REVIEW_MAX_SYMBOLS = 15;
+const REVIEW_MAX_HITS = 8;
+const REVIEW_TOO_COMMON = 40;
+const CODE_EXT = /\.(c?[jt]sx?|mjs|cjs|py|go|rb|java|kt|php|cs|rs|sh|bash)$/;
+const CONF_EXT = /\.(ya?ml|json|tf|tfvars|hcl|properties|toml|ini|env)$/;
+const CODE_SYM = [
+  /\bfunction\s+([A-Za-z_$][\w$]*)/g,
+  /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_$][\w$]*\s*=>)/g,
+  /\bdef\s+([A-Za-z_]\w*)/g,
+  /\bclass\s+([A-Za-z_$][\w$]*)/g,
+  /\bfunc\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)/g,
+  /^\s*(?:export\s+)?(?:static\s+)?(?:async\s+)?([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{/gm,
+];
+const CONF_SYM = [
+  /^\s*-?\s*["']?([A-Za-z_][\w.-]*)["']?\s*[:=]/gm,
+  /^\s*(?:resource|module|variable|output|data)\s+"[^"]*"\s*(?:"([\w-]+)")?/gm,
+];
+const COMMON_SYMS = new Set(['name', 'image', 'tag', 'value', 'values', 'enabled', 'type', 'id', 'key', 'labels', 'annotations', 'spec',
+  'metadata', 'data', 'kind', 'apiVersion', 'version', 'description', 'default', 'if', 'for', 'while', 'switch', 'catch', 'return',
+  'constructor', 'then', 'else', 'test', 'it', 'describe', 'main', 'run', 'get', 'set', 'function', 'async', 'self', 'this']);
+const CHECKLISTS = [
+  [(f) => /(^|\/)values[^/]*\.ya?ml$/.test(f), 'Helm values: every changed key is read by a template (grep the chart); a change to shared values.yaml also reaches every other environment; what restarts or rolls out when it is applied.'],
+  [(f, t) => /\.ya?ml$/.test(f) && /^\s*-?\s*(alert|expr):/m.test(t), 'Alert rules: metric name and window; threshold direction (> vs >=); for: duration; labels.severity; existing rules unchanged.'],
+  [(f) => /(^|\/)\.github\/workflows\/|(^|\/)\.gitlab-ci\.ya?ml$|(^|\/)Jenkinsfile$|azure-pipelines/.test(f), 'CI: triggers and path filters still match the files they should; referenced secrets and variables exist; job order and needs.'],
+  [(f) => /\.(tf|tfvars|hcl)$/.test(f), 'Terraform: anything replaced or destroyed (a forces-new attribute); renamed resources need a moved block; provider and module versions.'],
+  [(f) => /(^|\/)Dockerfile[^/]*$/.test(f), 'Docker: base image pinned; user; exposed ports; build cache order; secrets not baked into layers.'],
+  [(f) => /\.(sh|bash)$/.test(f), 'Shell: quoting and paths with spaces; set -e and pipefail behaviour; exit codes callers rely on.'],
+  [(f) => CODE_EXT.test(f) && !/\.(sh|bash)$/.test(f), 'Code: boundaries and empty, huge or wrong-type input; error paths and what callers expect back; every unchanged caller under IMPACT; same result when run twice; a test that fails without the change.'],
+];
+
+function symbolsOf(file, text) {
+  const res = CODE_EXT.test(file) ? CODE_SYM : CONF_EXT.test(file) ? CONF_SYM : [];
+  const found = [];
+  for (const re of res) for (const m of text.matchAll(re)) {
+    const s = (m[1] || '').split('.').pop();
+    if (s && s.length >= 3 && !COMMON_SYMS.has(s)) found.push(s);
+  }
+  return found;
+}
+
+function review(repoArg, t, opt) {
+  const r = needRepo(repoArg); taskName(t);
+  const B = `refs/firstmate/${t}/base`; const H = `refs/firstmate/${t}/head`;
+  if (!git(r, ['rev-parse', '-q', '--verify', H]).ok) die(`no task '${t}'`);
+  const w = path.join(r, '.firstmate', 'wt', t);
+  if (fs.existsSync(w) && gitOut(w, ['status', '--porcelain'])) die(`task '${t}' has unsaved changes; run: fm.js save ${r} ${t} "<message>"`);
+  const files = lines(gitOut(r, ['diff', '--name-only', B, H]));
+  if (!files.length) die(`task '${t}' has no changes`);
+  const changed = new Set(files);
+  let gateState = 'not run';
+  try {
+    const [gsha, gv] = fs.readFileSync(path.join(r, '.firstmate', 'notes', `${t}.gate`), 'utf8').trim().split(/\s+/);
+    gateState = gsha === gitOut(r, ['rev-parse', H]) ? gv : 'stale (the task changed after its gate)';
+  } catch {}
+  out(`[fm] review ${t}: ${files.length} file(s) changed, gate ${gateState}`);
+  out(gitOut(r, ['diff', '--stat', B, H]));
+
+  // Diff, trimmed per file so a long file does not hide the others.
+  const full = opt === '--full';
+  const perFile = gitOut(r, ['diff', '-U3', '--no-color', B, H]).split(/^(?=diff --git )/m).filter(Boolean);
+  const share = full ? Infinity : Math.max(20, Math.floor(REVIEW_MAX_LINES / perFile.length));
+  out('\n--- DIFF');
+  const texts = {};
+  for (const chunk of perFile) {
+    const ls = chunk.replace(/\n$/, '').split('\n');
+    const file = (ls[0].match(/ b\/(.+)$/) || [])[1] || '';
+    // Names in code come from the whole hunk (the enclosing function is often a context line) and git's
+    // function hint after @@; in config only changed lines count, so neighbouring keys are not listed.
+    const at = ls.findIndex((l) => l.startsWith('@@'));
+    const hunk = at < 0 ? [] : ls.slice(at).filter((l) => CODE_EXT.test(file) || /^[+-@]/.test(l));
+    texts[file] = hunk.map((l) => (l.startsWith('@@') ? l.replace(/^@@[^@]*@@/, '') : l.slice(1))).join('\n');
+    out(ls.slice(0, share).join('\n'));
+    if (ls.length > share) out(`... ${ls.length - share} more lines in ${file} (all of it: fm.js review ${r} ${t} --full)`);
+  }
+
+  // Impact: where each changed name is used, unchanged files first.
+  const counts = new Map();
+  for (const f of files) for (const s of symbolsOf(f, texts[f] || '')) counts.set(s, (counts.get(s) || 0) + 1);
+  const syms = [...counts.keys()].sort((a, b) => b.length - a.length).slice(0, REVIEW_MAX_SYMBOLS);
+  out('\n--- IMPACT (uses by name; calls through variables or reflection are not found)');
+  if (!syms.length) out('no function, class or key names found in the changed lines');
+  for (const s of syms) {
+    const hits = lines(gitOut(r, ['grep', '-n', '-I', '-w', '-F', '-e', s, H, '--', '.', ':(exclude).firstmate']))
+      .map((l) => l.slice(H.length + 1).match(/^(.*?):(\d+):(.*)$/)).filter(Boolean)
+      .map(([, f, n, txt]) => ({ f, n, txt: txt.trim().slice(0, 100), same: changed.has(f) }))
+      .sort((a, b) => a.same - b.same);
+    const others = hits.filter((h) => !h.same).length;
+    if (hits.length > REVIEW_TOO_COMMON) { out(`${s}: ${hits.length} uses (${others} in unchanged files), too common to list`); continue; }
+    out(`${s}: ${hits.length} use(s), ${others} in unchanged files`);
+    for (const h of hits.slice(0, REVIEW_MAX_HITS)) out(`  ${h.f}:${h.n}${h.same ? '' : '  [unchanged]'}  ${h.txt}`);
+    if (hits.length > REVIEW_MAX_HITS) out(`  ... ${hits.length - REVIEW_MAX_HITS} more`);
+  }
+
+  // Related files left unchanged: same stem in the same folder (values-*.yaml, messages_en/_zh) and tests.
+  const tree = lines(gitOut(r, ['ls-tree', '-r', '--name-only', H]));
+  const stem = (b) => b.replace(/\.[^.]*$/, '').split(/[-_.]/)[0].toLowerCase();
+  const related = new Set();
+  for (const f of files) {
+    const d = path.posix.dirname(f); const b = path.posix.basename(f); const ext = path.posix.extname(f);
+    const name = b.slice(0, b.length - ext.length).replace(/\.(test|spec)$/, '');
+    for (const x of tree) {
+      if (changed.has(x)) continue;
+      const xb = path.posix.basename(x);
+      const sibling = path.posix.dirname(x) === d && path.posix.extname(x) === ext && stem(b).length >= 3 && stem(xb) === stem(b);
+      const test = [`${name}.test${ext}`, `${name}.spec${ext}`, `test_${name}${ext}`, `${name}_test${ext}`, `${name}${ext}`].includes(xb) && xb !== b;
+      if (sibling || test) related.add(x);
+    }
+  }
+  out('\n--- RELATED, UNCHANGED');
+  out(related.size ? [...related].slice(0, 12).map((x) => `  ${x}`).join('\n') : 'none');
+
+  out('\n--- CHECKLIST');
+  const items = CHECKLISTS.filter(([test]) => files.some((f) => test(f, texts[f] || ''))).map(([, text]) => `- ${text}`);
+  out(items.length ? items.join('\n') : '- Every requested change is present and nothing unrequested changed.');
+  out(`\n[fm] review ${t}: compare with the captain's words, then give the checker 3 to 5 scenarios (situation or input, expected result, why risky with file:line).`);
+}
+
 function main(argv) {
-  if (argv.length < 2) die('usage: fm.js <init|fact|start|save|gate|deliver|status|clean> <repo> [args] | fm.js shape <brief.md> [--sections] [file]');
+  if (argv.length < 2) die('usage: fm.js <init|fact|start|save|gate|review|deliver|status|clean> <repo> [args] | fm.js shape <brief.md> [--sections] [file]');
   const [cmd, arg, ...rest] = argv;
   switch (cmd) {
     case 'shape': return shape(arg, rest);
@@ -336,6 +459,7 @@ function main(argv) {
     case 'start': return start(arg, rest[0]);
     case 'save': return save(arg, rest[0], rest[1]);
     case 'gate': return gate(arg, rest[0], rest.slice(1).join(' '));
+    case 'review': return review(arg, rest[0], rest[1]);
     case 'deliver': return deliver(arg, rest[0], rest[1]);
     case 'status': return status(arg);
     case 'clean': return clean(arg, rest[0]);

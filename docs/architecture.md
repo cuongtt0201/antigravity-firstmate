@@ -10,7 +10,7 @@ flowchart TB
 
   subgraph app["Antigravity App"]
     direction TB
-    fm["<b>First mate</b> · Gemini Argon<br/>picks the playbook, briefs, judges<br/><i>never edits your checkout</i>"]
+    fm["<b>First mate</b> · main model (Argon, Claude, GPT)<br/>picks the playbook, briefs, reviews the diff<br/><i>never edits your checkout</i>"]
     subgraph crew["Crew · Gemini Flash"]
       direction LR
       inv["Explorers<br/><i>read-only, file:line evidence</i>"]
@@ -44,7 +44,7 @@ flowchart TB
 
 | Part | Model | Writes | Job |
 |---|---|---|---|
-| First mate (`agents/firstmate.md`) | Gemini Argon | `.firstmate/facts.md`, notes | Pick the playbook, brief explorers and workers, judge their evidence, deliver |
+| First mate (`agents/firstmate.md`) | The model you pick (Argon by default) | `.firstmate/facts.md`, notes | Pick the playbook, brief explorers and workers, judge their evidence, deliver |
 | Explorer (`agents/explorer.md`) | Gemini Flash | Nothing | Read code, config and command output for one angle; report findings with `file:line` evidence and measured/inferred/guess labels |
 | Worker (`agents/worker.md`) | Gemini Flash | Only its task workspace | Make one change; report the check it ran and the evidence |
 | Checker (`agents/checker.md`) | Gemini Flash | Nothing | Compare a change with the original request; for code, run tests and adversarial inputs; for config, list impact and unknown keys |
@@ -70,7 +70,7 @@ Gemini follows written rules more loosely than the models pstack was built on, s
 ```mermaid
 sequenceDiagram
   actor C as You
-  participant F as First mate (Argon)
+  participant F as First mate (main model)
   participant W as Worker (Flash)
   participant S as fm.js
   C->>F: "thêm alert khi pod restart > 3"
