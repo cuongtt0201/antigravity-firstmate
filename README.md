@@ -137,7 +137,7 @@ sequenceDiagram
 npx -y github:cuongtt0201/antigravity-firstmate
 ```
 
-To pin this release: `npx -y github:cuongtt0201/antigravity-firstmate#v0.11.0`.
+To pin this release: `npx -y github:cuongtt0201/antigravity-firstmate#v0.11.1`.
 
 The installer copies `plugin/` to `~/.gemini/config/plugins/flash-ultra/`, fills in the absolute paths for your machine, enables the plugin in `~/.gemini/config/config.json` (after backing it up) and makes the installed copy read-only, so agents cannot edit their own guardrails. Running it again updates the plugin; the previous copy is backed up to your temp folder.
 
@@ -193,13 +193,11 @@ The guard reads command text, so it is a safety net, not a sandbox.
 
 More detail (workspace model, full guard table, token chart) is in [docs/architecture.md](docs/architecture.md).
 
-## Benchmarks
-
-Not published yet. A comparison of Flash-only, Argon-only and Firstmate on a fixed set of tasks (a how question, an incident, a Helm change, a written case study) is planned.
-
 ## Known limitations
 
 - Windows support is new: tested in CI (GitHub Actions, windows-latest), not yet in long daily use. On Windows the hooks call `node` from PATH.
+- Only the first mate has a budget. Explorers, workers and checkers have no step or time limit, so open-ended work such as tuning a model until a score improves can run for thousands of steps and use up the quota (one worker ran over 2,000 steps). Give such requests a stop condition: a target, a number of experiments, or a time.
+- In the Antigravity CLI (`agy`) 1.4.6 on Windows, every terminal command took about 12 minutes to return while the plugin was enabled, and about a second with it disabled. 1.4.7 no longer shows this; use 1.4.7 or newer.
 - The gate checks syntax and rendering, not behaviour. Review the diff as you would any PR.
 - Charts vendored as git submodules render only if they are checked out in your clone; otherwise the gate reports SKIP.
 - Prompt rules guide the models but are not enforced; only the hooks and scripts are.
