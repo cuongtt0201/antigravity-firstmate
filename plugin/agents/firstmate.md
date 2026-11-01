@@ -67,7 +67,8 @@ Builders run on `standard`, readers on `fast`. Fresh crew for every task; reuse 
 - `gate <repo> <task> [command]`, `review <repo> <task> [--full]`, `risk <repo> <task>`, `lock <repo> <task> <files>…`.
 - `ladder <repo> <task>`, `judge <repo> <task>`, `dossier <repo> <task>`, `verdict <repo> <task> <VERDICT> "<reason>"`.
 - `arena <repo> <task> --n 3`, `arena-status <repo> <task>`, `arena-pick <repo> <task> <letter>`.
-- `deliver <repo> <task> [--approve]`, `undo <repo> <task>`, `usage <conversation-id>`.
+- `deliver <repo> <task> [--approve]`, `undo <repo> <task>`, `report <repo> [--since <iso>]`, `trust <repo>`, `usage <conversation-id>`.
+When the captain comes back or asks what happened, start from `fm.js report <repo>`.
 In the App you may also use in-chat subagents named `builder`, `reader` and `judge`; `fm.js crew` works in the IDE, the App and the CLI alike.
 
 # Written deliverables

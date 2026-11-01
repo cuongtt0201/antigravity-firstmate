@@ -28,6 +28,8 @@
 //   fm.js verdict <repo> <task> APPROVE|REVISE|REJECT|HUMAN "<reason>" [--risk medium|high]   record a verdict by hand
 //   fm.js ladder  <repo> <task>              the next step from the task's record: build, gate, fix, arena, judge, deliver, ask captain
 //   fm.js arena   <repo> <task> --n 3 [--request ".."]   variants <task>--a.. from one base; arena-status; arena-pick <task> <letter>
+//   fm.js report  <repo> [--since <iso>]     merged tasks, open tasks and their state, crew tokens and the strong model's share
+//   fm.js trust   <repo>                     how many merges were kept, undone or reverted by the captain
 //   fm.js usage   <conversation-id> [--brain <dir>]...  tokens per chat and subagent, and the strong model's share
 // Tasks live in refs/firstmate/<task>/{base,head}, never in refs/heads, so `git branch` and pushes never see them.
 // Node only (no bash, no ruby), so the same script runs on macOS, Linux and Windows.
@@ -853,6 +855,62 @@ function arenaPick(repoArg, t, letter) {
   out(`[fm] arena ${t}: kept variant ${letter}; the others are removed. Graft ideas from their reports with a builder, then gate, judge and deliver ${t}.`);
 }
 
+// ---------- trust and report: what the captain reads instead of every diff ----------
+function trust(repoArg) {
+  const r = needRepo(repoArg);
+  const rows = readLedger(r);
+  const reverts = gitOut(r, ['log', '--format=%B', '--grep', 'This reverts commit']);
+  let undone = 0; let reverted = 0;
+  for (const x of rows) {
+    if (x[8]) undone += 1;
+    else if (x[2] === 'commit' && x[7] && x[7] !== '-' && reverts.includes(`This reverts commit ${x[7]}`)) reverted += 1;
+  }
+  const merged = rows.length; const kept = merged - undone - reverted;
+  const pct = merged ? Math.floor((100 * kept) / merged) : 0;
+  out(`[fm] trust in ${r}: merged ${merged} | undone ${undone} | reverted by the captain ${reverted} | kept ${kept} (${pct}%)`);
+  if (merged < 5) out('[fm] too few merges to judge yet');
+  else if (pct >= 90) out(`[fm] suggestion: the crew's merges hold up; merge ${loadConfig(r).merge} with autoMergeMaxRisk medium is reasonable`);
+  else if (pct < 70) out('[fm] suggestion: more than 30% of merges were taken back; set merge propose, or autoMergeMaxRisk low, until that drops');
+}
+
+function report(repoArg, args) {
+  const r = needRepo(repoArg);
+  const si = args.indexOf('--since'); const since = si >= 0 ? String(args[si + 1] || '') : '';
+  const after = (iso) => !since || String(iso) >= since;
+  const rows = readLedger(r).filter((x) => after(x[0]));
+  out(`[fm] report for ${r}${since ? ` since ${since}` : ''}`);
+  out(`merged (${rows.length}):`);
+  for (const x of rows) out(`  ${x[1]} | ${x[2] === 'commit' ? `commit ${x[7].slice(0, 7)}` : 'uncommitted'} | risk ${x[3]} | verdict ${x[5]}${x[8] ? ' | undone' : ''}`);
+  const live = taskNames(r, /^refs\/firstmate\/(.*)\/head$/);
+  out(`open tasks (${live.length}):`);
+  for (const t of live) {
+    const head = gitOut(r, ['rev-parse', `refs/firstmate/${t}/head`]);
+    const [gsha, gv] = readNote(r, `${t}.gate`).split(/\s+/);
+    let state = 'in progress';
+    if (gsha === head && gv === 'FAIL') state = 'failing gate';
+    else if (gsha === head && gv === 'PASS') {
+      const risk = taskRisk(r, t).level; const vd = verdictOf(r, t);
+      if (risk === 'high') state = 'waiting for the captain (high risk)';
+      else if (risk === 'medium' && !(vd.v === 'APPROVE' && vd.sha === head)) state = vd.v && vd.sha === head ? `judge said ${vd.v}` : 'waiting for the judge';
+      else state = 'ready to deliver';
+    }
+    out(`  ${t} | ${state} | ${gitOut(r, ['diff', '--shortstat', `refs/firstmate/${t}/base`, `refs/firstmate/${t}/head`]).trim() || 'no change'}`);
+  }
+  let total = 0; let strong = 0;
+  try {
+    for (const f of fs.readdirSync(notesDir(r)).filter((x) => x.endsWith('.crew.jsonl'))) {
+      for (const l of fs.readFileSync(path.join(notesDir(r), f), 'utf8').split('\n').filter(Boolean)) {
+        let row; try { row = JSON.parse(l); } catch { continue; }
+        if (!after(row.time)) continue;
+        const u = row.usage || {};
+        const n = (Number(u.input_tokens) || 0) + (Number(u.cache_read_tokens) || 0) + (Number(u.output_tokens) || 0);
+        total += n; if (!/flash/i.test(String(row.model))) strong += n;
+      }
+    }
+  } catch {}
+  out(`crew tokens: ${total} (strong model ${strong}, ${total ? Math.floor((100 * strong) / total) : 0}%)`);
+}
+
 // ---------- crew: headless agy processes, one per task ----------
 async function crewCmd(repoArg, rest) {
   const r = needRepo(repoArg);
@@ -893,6 +951,8 @@ function main(argv) {
   switch (cmd) {
     case 'shape': return shape(arg, rest);
     case 'usage': return usageCmd(arg, rest);
+    case 'trust': return trust(arg);
+    case 'report': return report(arg, rest);
     case 'ladder': { const r = needRepo(arg); taskName(rest[0]); return ladder(r, rest[0]); }
     case 'arena': return arena(arg, rest[0], rest.slice(1));
     case 'arena-status': return arenaStatus(arg, rest[0]);
