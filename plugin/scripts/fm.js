@@ -11,6 +11,7 @@
 //   fm.js status  <repo>
 //   fm.js clean   <repo> <task|--all>
 //   fm.js shape   <brief.md> [--sections] [file]  word counts of a /best brief's deliverables and drafts vs their limits
+//   fm.js usage   <conversation-id> [--brain <dir>]...  tokens per chat and subagent, and the strong model's share
 // Tasks live in refs/firstmate/<task>/{base,head}, never in refs/heads, so `git branch` and pushes never see them.
 // Node only (no bash, no ruby), so the same script runs on macOS, Linux and Windows.
 
@@ -449,11 +450,21 @@ function review(repoArg, t, opt) {
   out(`\n[fm] review ${t}: compare with the captain's words, then give the checker 3 to 5 scenarios (situation or input, expected result, why risky with file:line).`);
 }
 
+function usageCmd(id, args) {
+  const brainDirs = [];
+  for (let i = 0; i < args.length; i++) if (args[i] === '--brain' && args[i + 1]) brainDirs.push(args[++i]);
+  const { usage, formatUsage } = require('./fm-usage.js');
+  const res = usage(id, { brainDirs });
+  if (!res) die(`no transcript for conversation '${id}'`);
+  out(formatUsage(res));
+}
+
 function main(argv) {
-  if (argv.length < 2) die('usage: fm.js <init|fact|start|save|gate|review|deliver|status|clean> <repo> [args] | fm.js shape <brief.md> [--sections] [file]');
+  if (argv.length < 2) die('usage: fm.js <init|fact|start|save|gate|review|deliver|status|clean> <repo> [args] | fm.js shape <brief.md> [--sections] [file] | fm.js usage <conversation-id>');
   const [cmd, arg, ...rest] = argv;
   switch (cmd) {
     case 'shape': return shape(arg, rest);
+    case 'usage': return usageCmd(arg, rest);
     case 'init': return init(arg, rest[0]);
     case 'fact': return fact(arg, rest);
     case 'start': return start(arg, rest[0]);
