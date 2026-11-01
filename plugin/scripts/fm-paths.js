@@ -49,4 +49,24 @@ function repoOfWorkspace(dir) {
   }
 }
 
-module.exports = { fmHome, wtRoot, repoKey, taskDir, legacyTaskDir, notesDir, repoOfWorkspace };
+// The real path of p, also when p does not exist yet (its nearest existing folder, resolved, plus the rest).
+function realish(p) {
+  let d = path.resolve(String(p || '')); const rest = [];
+  for (;;) {
+    try { return path.join(fs.realpathSync.native(d), ...rest.reverse()); } catch {}
+    const up = path.dirname(d);
+    if (up === d) return path.resolve(String(p || ''));
+    rest.push(path.basename(d)); d = up;
+  }
+}
+const isWithin = (child, parent) => { const c = realish(child); const pr = realish(parent); return c === pr || c.startsWith(pr + path.sep); };
+
+// A folder inside a firstmate task workspace (under the workspace root, or a v0.12 <repo>/.firstmate/wt/<task>).
+// Any other linked worktree, such as one the captain made, is the captain's checkout.
+function isTaskWorkspaceDir(dir) {
+  if (!dir) return false;
+  if (!repoOfWorkspace(dir)) return false;
+  return isWithin(dir, wtRoot()) || /[\\/]\.firstmate[\\/]wt[\\/]/.test(realish(dir));
+}
+
+module.exports = { fmHome, wtRoot, repoKey, taskDir, legacyTaskDir, notesDir, repoOfWorkspace, isTaskWorkspaceDir, isWithin, realish };

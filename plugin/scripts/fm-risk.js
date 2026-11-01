@@ -9,6 +9,8 @@ const HIGH = [
   ['CI pipeline', /(^|\/)(\.github\/workflows\/|\.gitlab-ci\.ya?ml$|Jenkinsfile$|azure-pipelines|\.circleci\/)/],
   ['infrastructure', /\.(tf|tfvars|hcl)$|(^|\/)Chart\.yaml$|(^|\/)values[^/]*\.ya?ml$|(^|\/)(k8s|kubernetes|helm|deploy|manifests)\/|(^|\/)Dockerfile[^/]*$|(^|\/)docker-compose[^/]*\.ya?ml$/i],
   ['dependencies', /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|poetry\.lock|Pipfile\.lock|go\.mod|go\.sum|Cargo\.lock|Gemfile\.lock|composer\.lock)$|(^|\/)requirements[^/]*\.txt$/],
+  ['dependency manifest', /(^|\/)(package\.json|pyproject\.toml|setup\.py|setup\.cfg|Pipfile|Cargo\.toml|Gemfile|pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|composer\.json|\.npmrc|\.yarnrc(\.yml)?)$/],
+  ['git hooks', /(^|\/)(\.husky|\.githooks)\/|(^|\/)(lefthook\.ya?ml|\.pre-commit-config\.ya?ml)$/],
   ['secrets or environment', /(^|\/)\.env(\.|$)|secret|credential|password|\.(pem|key|p12|pfx)$/i],
 ];
 const LOW = [

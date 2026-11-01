@@ -247,10 +247,20 @@ function startLocked(r, t, baseRef) {
   if (gitOut(r, ['status', '--porcelain'])) out("[fm] note: the captain's uncommitted changes are NOT in this workspace");
 }
 
+// A task workspace must be this repo's own linked worktree: if its .git was pointed elsewhere (at the captain's
+// repo, say), a commit there would land on the captain's branch.
+function assertWorkspace(r, t, w) {
+  const { realish } = require('./fm-paths.js');
+  const gd = gitOut(w, ['rev-parse', '--absolute-git-dir']);
+  const own = realish(path.join(r, '.git', 'worktrees'));
+  if (!gd || !realish(gd).startsWith(own + path.sep)) die(`the workspace of task '${t}' does not point at its own worktree of ${r} (git dir: ${gd || 'none'}); nothing was recorded. Remove it with fm.js clean ${r} ${t}.`);
+}
+
 function save(repoArg, t, msg) {
   const r = needRepo(repoArg); taskName(t);
   const w = taskDir(r, t); touchSlot(r, t);
   if (!fs.existsSync(w)) die(`no workspace for task '${t}'`);
+  assertWorkspace(r, t, w);
   git(w, ['add', '-A']);
   if (git(w, ['diff', '--cached', '--quiet']).ok) out('[fm] no new changes to save');
   else {
@@ -268,6 +278,7 @@ function gate(repoArg, t, cmd) {
   const r = needRepo(repoArg); taskName(t);
   const w = taskDir(r, t); touchSlot(r, t);
   if (!fs.existsSync(w)) die(`no workspace for task '${t}'`);
+  assertWorkspace(r, t, w);
   if (gitOut(w, ['status', '--porcelain'])) die(`task '${t}' has unsaved changes; run: fm.js save ${r} ${t} "<message>"`);
   const headc = gitOut(w, ['rev-parse', 'HEAD']);
   if (headc !== gitOut(r, ['rev-parse', `refs/firstmate/${t}/head`])) git(r, ['update-ref', `refs/firstmate/${t}/head`, headc]);
@@ -376,7 +387,8 @@ function deliverLocked(r, t, args) {
   try { [gsha, gv] = fs.readFileSync(note, 'utf8').trim().split(/\s+/); } catch { die(`task '${t}' has no gate result; run: fm.js gate ${r} ${t}`); }
   if (gsha !== gitOut(r, ['rev-parse', H])) die(`task '${t}' changed after its gate; run the gate again`);
   if (gv !== 'PASS') die(`task '${t}' gate is ${gv}; fix it first`);
-  const files = lines(gitOut(r, ['diff', '--name-only', B, H]));
+  // --no-renames: a rename is a deletion plus an addition, so both paths are checked for the captain's edits and committed
+  const files = lines(gitOut(r, ['diff', '--name-only', '--no-renames', B, H]));
   if (!files.length) die(`task '${t}' has no changes to deliver`);
 
   const cfg = loadConfig(r);
@@ -390,9 +402,9 @@ function deliverLocked(r, t, args) {
     mode = 'propose';
   }
   const verdict = verdictOf(r, t);
-  const approved = verdict.v === 'APPROVE' && verdict.sha === gitOut(r, ['rev-parse', H]);
+  const approved = verdict.v === 'APPROVE' && verdict.source === 'judge' && verdict.sha === gitOut(r, ['rev-parse', H]);
   if (!opt.approve && mode !== 'propose' && risk.level === 'medium' && !approved) {
-    out(`[fm] risk medium needs the judge's APPROVE on the current state of the task (fm.js judge ${r} ${t})${verdict.v ? `; the last verdict is ${verdict.v}${verdict.sha === gitOut(r, ['rev-parse', H]) ? '' : ' on an older state'}` : ''}:`);
+    out(`[fm] risk medium needs the judge's APPROVE on the current state of the task (fm.js judge ${r} ${t})${verdict.v ? `; the last verdict is ${verdict.v} (${verdict.source})${verdict.sha === gitOut(r, ['rev-parse', H]) ? '' : ' on an older state'}` : ''}:`);
     mode = 'propose';
   }
   if (mode === 'propose') {
@@ -417,8 +429,15 @@ function deliverLocked(r, t, args) {
     for (const f of files) git(r, ['reset', '-q', '--', f]);
     const conflict = files.filter((f) => { try { return /^<{7} /m.test(fs.readFileSync(path.join(r, f), 'utf8')); } catch { return false; } });
     if (conflict.length) {
-      clean = false;
-      out(`[fm] CONFLICT markers left in: ${conflict.map((f) => `'${f}'`).join(' ')}. Resolve them by hand; the task is kept (fm.js clean ${r} ${t} when done).`);
+      // These files had no edits of the captain (checked above), so putting them back as they are on the branch
+      // loses nothing; the captain never finds conflict markers left by a delivery nobody watched.
+      for (const f of files) {
+        if (git(r, ['cat-file', '-e', `HEAD:${f}`]).ok) git(r, ['checkout', '-q', 'HEAD', '--', f]);
+        else fs.rmSync(path.join(r, f), { force: true });
+      }
+      fs.rmSync(keepPatch, { force: true });
+      out(`[fm] CONFLICT: task ${t} does not apply cleanly on ${gitOut(r, ['rev-parse', '--abbrev-ref', 'HEAD'])} (${conflict.map((f) => `'${f}'`).join(' ')}). Your files are unchanged and the task is kept: redo it from the current branch (fm.js clean ${r} ${t}, then start it again).`);
+      throw new Exit(1);
     } else if (!three.ok) {
       fs.rmSync(keepPatch, { force: true });
       die('the task could not be applied to your branch (git apply --3way failed); nothing was changed and the task is kept');
@@ -447,7 +466,7 @@ function deliverLocked(r, t, args) {
   fs.appendFileSync(path.join(notesDir(r), 'log.md'), `- ${stamp} delivered task ${t} to ${branch}, ${done === 'commit' ? `commit ${sha.slice(0, 7)}` : 'uncommitted'}: ${files.join(' ')}${clean ? '' : ' (CONFLICTS)'}\n`);
   if (clean) {
     const rows = readLedger(r);
-    rows.push([new Date().toISOString(), t, done, risk.level, 'PASS', opt.approve ? 'captain' : (approved ? 'APPROVE' : '-'), files.join(' '), sha, '']);
+    rows.push([new Date().toISOString(), t, done, risk.level, 'PASS', opt.approve ? 'captain' : (approved ? 'APPROVE (judge)' : '-'), files.join(' '), sha, '']);
     writeLedger(r, rows);
   }
   out('[fm] logged in .firstmate/notes/log.md and ledger.tsv');
@@ -745,11 +764,13 @@ function dossier(r, t) {
 }
 
 const VERDICTS = ['APPROVE', 'REVISE', 'REJECT', 'HUMAN'];
-function writeVerdict(r, t, v, reason, raise) {
+// source: 'judge' when fm.js judge recorded it, 'manual' when someone typed it; only the judge's APPROVE merges
+// medium risk on its own.
+function writeVerdict(r, t, v, reason, raise, source = 'manual') {
   if (!VERDICTS.includes(v)) die(`verdict must be one of ${VERDICTS.join(', ')}`);
   const head = gitOut(r, ['rev-parse', `refs/firstmate/${t}/head`]);
   if (!head) die(`no task '${t}'`);
-  fs.writeFileSync(path.join(notesDir(r), `${t}.verdict`), `${head} ${v}\n${reason || ''}\n`);
+  fs.writeFileSync(path.join(notesDir(r), `${t}.verdict`), `${head} ${v} ${source}\n${reason || ''}\n`);
   if (raise) {
     const { maxRisk, ORDER } = require('./fm-risk.js');
     if (!ORDER.includes(raise)) die(`risk must be one of ${ORDER.join(', ')}`);
@@ -758,8 +779,8 @@ function writeVerdict(r, t, v, reason, raise) {
   }
 }
 function verdictOf(r, t) {
-  const [sha, v] = (readNote(r, `${t}.verdict`).split('\n')[0] || '').split(/\s+/);
-  return { sha: sha || '', v: v || '' };
+  const [sha, v, source] = (readNote(r, `${t}.verdict`).split('\n')[0] || '').split(/\s+/);
+  return { sha: sha || '', v: v || '', source: source || 'manual' };
 }
 
 async function judgeCmd(repoArg, t, rest) {
@@ -781,7 +802,7 @@ async function judgeCmd(repoArg, t, rest) {
   const v = (resp.match(/^\s*VERDICT:\s*(APPROVE|REVISE|REJECT|HUMAN)\b/m) || [])[1];
   if (!v) die(`the judge gave no VERDICT line; its report is in ${res.file}`);
   const raise = (resp.match(/^\s*RISK:\s*(low|medium|high)\b/mi) || [])[1];
-  writeVerdict(r, t, v, `judge report: ${res.file}`, raise && raise.toLowerCase());
+  writeVerdict(r, t, v, `judge report: ${res.file}`, raise && raise.toLowerCase(), 'judge');
   out(`[fm] verdict for task ${t}: ${v}${raise ? ` (risk raised to at least ${raise.toLowerCase()})` : ''}`);
   if (v !== 'APPROVE') throw new Exit(1);
 }
@@ -800,7 +821,8 @@ function ladder(r, t) {
     const risk = taskRisk(r, t).level; const vd = verdictOf(r, t);
     if (risk === 'high') return say('ask captain', 'high risk: show the captain the change; deliver with --approve only after they agree');
     if (risk === 'low') return say('deliver', 'gate PASS, low risk');
-    if (vd.sha === head && vd.v === 'APPROVE') return say('deliver', 'gate PASS, medium risk, judge APPROVE');
+    if (vd.sha === head && vd.v === 'APPROVE' && vd.source === 'judge') return say('deliver', 'gate PASS, medium risk, judge APPROVE');
+    if (vd.sha === head && vd.v === 'APPROVE') return say('ask captain', 'a hand-written APPROVE: medium risk merges on the judge\'s APPROVE (fm.js judge) or the captain\'s --approve');
     if (vd.sha === head && vd.v === 'REVISE') return say('fix', "the judge asked for changes: send its FIXES to the builder");
     if (vd.sha === head && vd.v) return say('ask captain', `the judge said ${vd.v}`);
     return say('judge', 'gate PASS, medium risk: fm.js judge');
@@ -820,9 +842,21 @@ function arena(repoArg, t, args) {
   const ni = args.indexOf('--n'); const n = ni >= 0 ? Number(args[ni + 1]) : 3;
   if (!(n >= 2 && n <= 5)) die('--n must be 2 to 5');
   const ri = args.indexOf('--request');
-  const base = git(r, ['rev-parse', '-q', '--verify', `refs/firstmate/${t}/base`]).ok ? gitOut(r, ['rev-parse', `refs/firstmate/${t}/base`]) : gitOut(r, ['rev-parse', 'HEAD']);
-  withLock(r, () => { for (const l of 'abcde'.slice(0, n)) startLocked(r, `${t}--${l}`, base); });
+  // Variants start from the task's latest state when it exists, so acceptance tests a tester wrote and locked in
+  // the task are there, and they carry the task's request and locks: the arena never loosens the task's rules.
+  const parent = git(r, ['rev-parse', '-q', '--verify', `refs/firstmate/${t}/head`]).ok;
+  const base = gitOut(r, ['rev-parse', parent ? `refs/firstmate/${t}/head` : 'HEAD']);
   if (ri >= 0 && args[ri + 1]) fs.writeFileSync(path.join(notesDir(r), `${t}.request`), `${args[ri + 1].trim()}\n`);
+  withLock(r, () => {
+    for (const l of 'abcde'.slice(0, n)) {
+      const v = `${t}--${l}`;
+      startLocked(r, v, base);
+      for (const ext of ['request', 'locked', 'done', 'scenarios']) {
+        const f = path.join(notesDir(r), `${t}.${ext}`);
+        if (fs.existsSync(f)) fs.copyFileSync(f, path.join(notesDir(r), `${v}.${ext}`));
+      }
+    }
+  });
   fs.writeFileSync(path.join(notesDir(r), `${t}.arena`), `${n} ${base}\n`);
   out(`[fm] arena ${t}: ${n} variants (${[...'abcde'.slice(0, n)].map((l) => `${t}--${l}`).join(', ')}) from ${base.slice(0, 7)}. Send one builder per variant, each with a different approach.`);
 }
@@ -841,7 +875,13 @@ function arenaPick(repoArg, t, letter) {
   const v = `${t}--${letter}`;
   if (!git(r, ['rev-parse', '-q', '--verify', `refs/firstmate/${v}/head`]).ok) die(`no variant '${v}'`);
   withLock(r, () => {
-    if (git(r, ['rev-parse', '-q', '--verify', `refs/firstmate/${t}/head`]).ok) removeTask(r, t);
+    // the parent's workspace and refs go; its record (request, locks, arena and rescue markers) stays with the task
+    if (git(r, ['rev-parse', '-q', '--verify', `refs/firstmate/${t}/head`]).ok) {
+      const pw = taskDir(r, t);
+      if (fs.existsSync(pw)) { if (!git(r, ['worktree', 'remove', '--force', pw]).ok) fs.rmSync(pw, { recursive: true, force: true }); }
+      for (const k of ['base', 'head']) git(r, ['update-ref', '-d', `refs/firstmate/${t}/${k}`]);
+      for (const ext of ['gate', 'gate.log', 'slot', 'attempts', 'verdict', 'riskfloor', 'risk']) fs.rmSync(path.join(notesDir(r), `${t}.${ext}`), { force: true });
+    }
     const from = taskDir(r, v); const to = path.join(path.dirname(from), t);
     if (!git(r, ['worktree', 'move', from, to]).ok) die(`could not move ${from} to ${to}`);
     for (const k of ['base', 'head']) git(r, ['update-ref', `refs/firstmate/${t}/${k}`, gitOut(r, ['rev-parse', `refs/firstmate/${v}/${k}`])]);
@@ -850,6 +890,7 @@ function arenaPick(repoArg, t, letter) {
       const f = path.join(notesDir(r), `${v}.${ext}`);
       if (fs.existsSync(f)) fs.renameSync(f, path.join(notesDir(r), `${t}.${ext}`));
     }
+    for (const ext of ['request', 'done', 'scenarios']) fs.rmSync(path.join(notesDir(r), `${v}.${ext}`), { force: true });
     for (const other of taskNames(r, /^refs\/firstmate\/(.*)\/head$/).filter((x) => x.startsWith(`${t}--`))) removeTask(r, other);
   });
   out(`[fm] arena ${t}: kept variant ${letter}; the others are removed. Graft ideas from their reports with a builder, then gate, judge and deliver ${t}.`);

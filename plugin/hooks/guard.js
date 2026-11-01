@@ -53,7 +53,7 @@ function pick(obj, keys) {
 const shell = require('./policy/shell');
 const core = require('./policy/core');
 const devops = require('./policy/devops');
-const { repoOfWorkspace } = require('../scripts/fm-paths.js');
+const { repoOfWorkspace, isTaskWorkspaceDir, isWithin, taskDir } = require('../scripts/fm-paths.js');
 
 function deciders(seg) {
   const s = seg.trim().slice(0, 160);
@@ -139,7 +139,7 @@ function sharedTask(args) {
   if (!Array.isArray(args.Subagents)) return '';
   const seen = new Set();
   for (const s of args.Subagents) {
-    if (!s || String(s.TypeName) !== 'worker') continue;
+    if (!s || !/^(worker|builder)$/.test(String(s.TypeName))) continue;
     const k = workspaceKey(s.Prompt || s.prompt);
     if (!k) continue;
     if (seen.has(k)) return k;
@@ -173,7 +173,7 @@ function commandPolicy(cmd, cwd0) {
   for (const seg of shell.segments(cmd)) {
     const w = shell.words(seg);
     if (w[0] === 'cd' && w[1]) { cwd = path.resolve(cwd || '.', w[1]); continue; }
-    const ctx = { cwd, inWorkspace: !!(cwd && repoOfWorkspace(cwd)) };
+    const ctx = { cwd, inWorkspace: isTaskWorkspaceDir(cwd), isWorkspace: isTaskWorkspaceDir };
     const d = core.judgeCommand(seg, ctx, deciders(seg)) || (packs.includes('devops') ? devops.judge(seg, deciders(seg)) : null);
     if (d) return d;
   }
@@ -197,7 +197,20 @@ function main() {
   if ((WRITE_TOOLS.has(tool) || tool === 'run_command') && PROTECTED_RE.test(subject)) {
     return out({ decision: 'deny', reason: '[guard] This is the user\'s guardrail (flash-ultra plugin / hook config). You may not modify or disable it. If you are blocked, tell the user.' });
   }
+  // The settings decide which rules apply (packs), how far the crew may go (caps) and what merges alone: they are
+  // the captain's. No agent writes the config files, and fm.js config only reads for agents.
+  const settingsDeny = { decision: 'deny', reason: '[guard] firstmate settings (packs, caps, merge mode, checks) are the captain\'s. Show the captain the exact fm.js config command to run in their own terminal.' };
+  const isSettingsFile = (f) => {
+    const x = path.resolve(String(f || ''));
+    return /[\\/]\.firstmate[\\/]config\.json$/.test(x) || x === path.resolve(require('../scripts/fm-paths.js').fmHome(), 'config.json');
+  };
+  if (WRITE_TOOLS.has(tool) && isSettingsFile(pick(args, ['Path', 'AbsolutePath', 'TargetFile', 'filePath', 'path']))) return out(settingsDeny);
   if (tool === 'run_command') {
+    for (const c of cmd.match(FM_SCRIPT_RE) || []) {
+      const w = shell.words(c.replace(FM_CALL_RE, 'fm'));
+      if (w[1] === 'config' && w.length > 4) return out(settingsDeny);
+    }
+    if (WRITE_CMD_RE.test(cmd) && /[\\/]\.firstmate[\\/]config\.json|[\\/]\.firstmate[\\/]+config\.json/.test(cmd)) return out(settingsDeny);
     const d = commandPolicy(cmd, args.Cwd);
     if (d) return out(d);
   }
@@ -222,7 +235,7 @@ function main() {
   // Pin worker subagents to Flash. The app's system prompt tends to pass "Model":"inherit",
   // which overrides the agent file's `model: flash` (antigravity-cli #1195) and would run the
   // workers on the expensive orchestrator model. `overwrite` is shallow-merged into the args.
-  const FLASH_AGENTS = /^(worker|checker|explorer)$/;
+  const FLASH_AGENTS = /^(worker|checker|explorer|builder|reader)$/;
   let overwrite = null;
   if (tool === 'invoke_subagent') {
     const n = Array.isArray(args.Subagents) ? args.Subagents.length : 1;
@@ -246,7 +259,10 @@ function main() {
 
   // A crew member started by fm.js crew carries its role in the environment; that wins over any lookup.
   const ENV_ROLE = { reader: 'explorer', judge: 'explorer', builder: 'worker' }[process.env.FM_ROLE] || '';
-  const agent = decision.decision === 'allow' ? (ENV_ROLE || agentOf(convoId, st, ev.modelName || p.modelName, ev)) : '';
+  // v1 role names (in-chat subagents in the App) get the same rules as the v0.12 roles they replace.
+  const V1_ROLE = { builder: 'worker', reader: 'explorer', judge: 'explorer' };
+  const looked = decision.decision === 'allow' && !ENV_ROLE ? agentOf(convoId, st, ev.modelName || p.modelName, ev) : '';
+  const agent = decision.decision === 'allow' ? (ENV_ROLE || V1_ROLE[looked] || looked) : '';
 
   // First-mate budget. Its facts, notes, the plugin's playbooks and fm.js are free; every other read
   // and every other command segment counts (so chaining a free command does not hide a read).
@@ -298,6 +314,16 @@ function main() {
     if ((WRITE_TOOLS.has(tool) && RECORD_RE.test(target)) ||
         (tool === 'run_command' && ((RECORD_RE.test(rest) && WRITE_CMD_RE.test(rest)) || /\bupdate-ref\b|refs\/firstmate\//.test(rest)))) {
       decision = { decision: 'deny', reason: '[guard] Gate results, notes, facts, settings and task refs are written only by fm.js. Run fm.js save and fm.js gate; do not edit .firstmate/notes, facts.md, config.json or refs/firstmate by hand.' };
+    }
+  }
+  // Crew writes: never into git's own files (a redirected .git would make fm.js commit elsewhere), and a builder
+  // started by fm.js crew only inside its own task workspace.
+  if (/^(worker|checker|explorer)$/.test(agent) && decision.decision === 'allow') {
+    const gitPath = (x) => /(^|[\\/])\.git([\\/]|$)/.test(String(x || ''));
+    if ((WRITE_TOOLS.has(tool) && gitPath(target)) || (tool === 'run_command' && WRITE_CMD_RE.test(cmd) && /(^|[\s"'\\/])\.git([\s"'\\/]|$)/.test(cmd.replace(FM_SCRIPT_RE, '')))) {
+      decision = { decision: 'deny', reason: '[guard] The crew never writes git\'s own files (.git). Change the project files; fm.js records the work.' };
+    } else if (WRITE_TOOLS.has(tool) && process.env.FM_ROLE === 'builder' && process.env.FM_REPO && process.env.FM_TASK && !isWithin(target, taskDir(process.env.FM_REPO, process.env.FM_TASK))) {
+      decision = { decision: 'deny', reason: `[guard] A builder writes only inside its task workspace (${taskDir(process.env.FM_REPO, process.env.FM_TASK)}).` };
     }
   }
   // Locked acceptance tests: the crew changes the code, never the test that judges it.

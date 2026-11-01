@@ -17,9 +17,9 @@ check "judge: a raised risk sticks" "RISK: high" "$(fm risk "$C" j3 | head -1)"
 fm config "$C" merge apply >/dev/null
 jt m1 "Edit code" src.js 'module.exports = 1\n'
 check "deliver: medium risk without a verdict waits" 3 "$(fm deliver "$C" m1 >/dev/null 2>&1; echo $?)"
-fm verdict "$C" m1 APPROVE "reviewed by hand" >/dev/null
-check "deliver: medium risk with APPROVE merges" 0 "$(fm deliver "$C" m1 >/dev/null 2>&1; echo $?)"
-check "ledger: verdict column" APPROVE "$(tail -1 "$C/.firstmate/notes/ledger.tsv" | cut -f6)"
+fm judge "$C" m1 >/dev/null 2>&1
+check "deliver: medium risk with the judge's APPROVE merges" 0 "$(fm deliver "$C" m1 >/dev/null 2>&1; echo $?)"
+check "ledger: verdict column" "APPROVE (judge)" "$(tail -1 "$C/.firstmate/notes/ledger.tsv" | cut -f6)"
 git -C "$C" checkout -q -- . ; git -C "$C" clean -fdq
 jt m2 "Edit code again" src2.js 'module.exports = 2\n'; fm verdict "$C" m2 APPROVE ok >/dev/null
 printf 'module.exports = 3\n' > "$(fm path "$C" m2)/src2.js"; fm save "$C" m2 y >/dev/null; fm gate "$C" m2 >/dev/null 2>&1

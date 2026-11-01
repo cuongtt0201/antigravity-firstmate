@@ -19,7 +19,14 @@ function judgeCommand(seg, ctx, { deny, ask }) {
   if (p === 'git') {
     const { name, rest } = sub(w, GIT_FLAGS);
     if (name === 'push') return deny('pushes to the remote');
-    if (ctx.inWorkspace) return null;
+    // -C, --work-tree and --git-dir point git somewhere else: judge the place git will act on
+    const targets = [];
+    for (let i = 1; i < w.length; i++) {
+      if ((w[i] === '-C' || w[i] === '--work-tree' || w[i] === '--git-dir') && w[i + 1]) targets.push(w[i + 1]);
+      const m = w[i].match(/^--(work-tree|git-dir)=(.+)$/); if (m) targets.push(m[2]);
+    }
+    const inWorkspace = targets.length ? targets.every((d) => ctx.isWorkspace(path.resolve(ctx.cwd || '.', d))) : ctx.inWorkspace;
+    if (inWorkspace) return null;
     if (name === 'reset' && rest.includes('--hard')) return deny("throws away the captain's uncommitted work");
     if (name === 'clean' && rest.some((x) => /^-[a-zA-Z]*f/.test(x) || x === '--force')) return deny("deletes the captain's untracked files");
     if ((name === 'checkout' || name === 'restore') && rest.includes('.') && !rest.includes('--staged')) return deny("throws away the captain's uncommitted work");

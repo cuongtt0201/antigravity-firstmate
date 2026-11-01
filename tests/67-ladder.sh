@@ -8,6 +8,8 @@ check "ladder: third FAIL → arena 3" "NEXT: arena 3" "$(fm ladder "$C" l1 | he
 echo '{}' > "$LW/a.json"; fm save "$C" l1 y >/dev/null; fm gate "$C" l1 >/dev/null 2>&1
 check "ladder: PASS → judge for medium risk" "NEXT: judge" "$(fm ladder "$C" l1 | head -1)"
 fm verdict "$C" l1 APPROVE ok >/dev/null
+check "ladder: a hand-written APPROVE goes to the captain" "NEXT: ask captain" "$(fm ladder "$C" l1 | head -1)"
+fm judge "$C" l1 >/dev/null 2>&1
 check "ladder: approved → deliver" "NEXT: deliver" "$(fm ladder "$C" l1 | head -1)"
 fm arena "$C" ar --n 3 --request "hard edge case" >/dev/null
 check "arena: three variants from one base" 3 "$(fm status "$C" | grep -cE '^  ar--[abc] ')"

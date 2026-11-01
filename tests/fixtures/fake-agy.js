@@ -5,7 +5,9 @@
 const fs = require('fs');
 const a = process.argv.slice(2);
 const val = (k) => { const i = a.indexOf(k); return i >= 0 ? a[i + 1] : ''; };
-const prompt = val('-p') || val('--print');
+let prompt = val('-p') || val('--print');
+const pf = (prompt.match(/(\S+\.prompt\.md)/) || [])[1];
+if (pf && fs.existsSync(pf)) prompt = fs.readFileSync(pf, 'utf8');
 const model = val('--model');
 const sleep = Number((prompt.match(/SLEEP:(\d+)/) || [])[1] || 0);
 const finish = () => {

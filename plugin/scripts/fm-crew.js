@@ -85,7 +85,19 @@ function prepare(r, spec, cfg) {
     `SKILLS: ${skills}`,
     ROLES[role].inTask ? `FACTS (known about this repo):\n${factsText(r)}` : `FACTS: ${path.join(r, '.firstmate', 'facts.md')}`,
   ].filter(Boolean).join('\n');
-  return { ...spec, model, cwd: ROLES[role].inTask ? ws : r, prompt: `${rolePrompt(role)}\n---\n${header}\n\n${brief.trim()}\n` };
+  let prompt = `${rolePrompt(role)}\n---\n${header}\n\n${brief.trim()}\n`;
+  // The prompt rides on the command line (agy -p); Windows caps a command line at 32,767 characters and Linux one
+  // argument at 128 KB. A longer prompt for a reader or the judge goes into a file in the repo they read first; a
+  // builder may not read outside its workspace, so its brief must be shorter.
+  const limit = Number(process.env.FM_ARGV_LIMIT) || (process.platform === 'win32' ? 24000 : 100000);
+  if (prompt.length > limit) {
+    if (ROLES[role].inTask) throw new CrewError(`task '${task}': the builder's prompt is ${prompt.length} characters (limit ${limit}); shorten the brief`);
+    const file = path.join(notesDir(r), `${task}.${role}.prompt.md`);
+    fs.mkdirSync(notesDir(r), { recursive: true });
+    fs.writeFileSync(file, prompt);
+    prompt = `Read the file ${file} first: it holds your full instructions and the material for this task. Follow it exactly and answer in the format it asks for.`;
+  }
+  return { ...spec, model, cwd: ROLES[role].inTask ? ws : r, prompt };
 }
 
 function runOne(r, m, cfg) {
@@ -147,7 +159,7 @@ async function crew(r, specs) {
   const members = specs.map((s) => prepare(r, s, cfg));
   for (const capKey of ['crewPerDay', 'judgePerDay']) {
     const want = members.filter((m) => ROLES[m.role].cap === capKey).length;
-    if (want && usedToday(r, capKey) + want > (Number(cfg.caps[capKey]) || 0)) throw new CrewError(`the daily cap ${capKey}=${cfg.caps[capKey]} would be passed (${usedToday(r, capKey)} used today); ask the captain, or raise it with fm.js config <repo> caps.${capKey} <n>`);
+    if (want && usedToday(r, capKey) + want > (Number(cfg.caps[capKey]) || 0)) throw new CrewError(`the daily cap ${capKey}=${cfg.caps[capKey]} would be passed (${usedToday(r, capKey)} used today): ask the captain; only they can raise it`);
   }
   const results = await Promise.all(members.map((m) => runOne(r, m, cfg)));
   return results.map((res) => ({ ...res, ...record(r, res) }));
