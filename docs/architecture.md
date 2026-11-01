@@ -1,3 +1,5 @@
+> **Note:** this page describes v0.12 (playbooks, in-chat subagents, workspaces inside the repo). For v1 see the [README](../README.md), [v1-decisions.md](v1-decisions.md) and the design in [superpowers/specs](superpowers/specs/2026-11-01-firstmate-v1-design.md).
+
 # Architecture
 
 How the Firstmate Crew plugin is put together, and what happens when you ask it something.
