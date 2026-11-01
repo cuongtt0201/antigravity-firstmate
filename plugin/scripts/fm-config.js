@@ -14,7 +14,7 @@ const DEFAULTS = {
   checkTimeoutSec: 600,
   portBase: 3100,
   packs: ['core', 'devops'],
-  models: { fast: 'flash', standard: 'flash', strong: 'argon' },
+  models: { fast: 'gemini-3.8-flash-low', standard: 'gemini-3.8-flash-medium', strong: 'gemini-4-argon-medium', second: 'claude-sonnet-5-5-medium' },
   caps: { perCall: 6, crewPerDay: 40, judgePerDay: 15 },
   autoMergeMaxRisk: 'medium', // highest risk merged without the captain: low | medium
   handoffAtTokens: 150000,
