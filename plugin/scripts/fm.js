@@ -23,6 +23,9 @@
 //   fm.js crew    <repo> <task> --role builder|reader|judge [--model ..] [--check "<cmd>"] [--brief ".." | --brief-file f]
 //   fm.js crew    <repo> --batch <file.json>  run the crew as headless agy processes, in parallel (see fm-crew.js);
 //                                             after each builder, fm.js saves and gates its workspace itself
+//   fm.js dossier <repo> <task>              what the judge reads: request, done-when, risk, locked tests, gate, review (≤ 30 KB)
+//   fm.js judge   <repo> <task> [--model strong|second]  System 2: one headless run on the strong model; records the verdict
+//   fm.js verdict <repo> <task> APPROVE|REVISE|REJECT|HUMAN "<reason>" [--risk medium|high]   record a verdict by hand
 //   fm.js usage   <conversation-id> [--brain <dir>]...  tokens per chat and subagent, and the strong model's share
 // Tasks live in refs/firstmate/<task>/{base,head}, never in refs/heads, so `git branch` and pushes never see them.
 // Node only (no bash, no ruby), so the same script runs on macOS, Linux and Windows.
@@ -206,9 +209,11 @@ function touchSlot(r, t) { try { const now = new Date(); fs.utimesSync(slotFile(
 const portBase = (r) => Number(loadConfig(r).portBase) || 3100;
 const slotEnv = (r, t) => ({ ...process.env, FIRSTMATE_SLOT: String(slotOf(r, t)), PORT: String(portBase(r) + slotOf(r, t)) });
 
-function start(repoArg, t) {
+function start(repoArg, t, args = []) {
   const r = needRepo(repoArg); taskName(t);
   withLock(r, () => startLocked(r, t));
+  const ri = args.indexOf('--request');
+  if (ri >= 0 && args[ri + 1]) fs.writeFileSync(path.join(notesDir(r), `${t}.request`), `${args[ri + 1].trim()}\n`);
 }
 function startLocked(r, t) {
   const w = taskDir(r, t);
@@ -379,6 +384,12 @@ function deliverLocked(r, t, args) {
     out(`[fm] risk ${risk.level} is above what merges without the captain (${risk.level === 'high' ? 'high always waits' : `autoMergeMaxRisk ${maxAuto}`}):`);
     mode = 'propose';
   }
+  const verdict = verdictOf(r, t);
+  const approved = verdict.v === 'APPROVE' && verdict.sha === gitOut(r, ['rev-parse', H]);
+  if (!opt.approve && mode !== 'propose' && risk.level === 'medium' && !approved) {
+    out(`[fm] risk medium needs the judge's APPROVE on the current state of the task (fm.js judge ${r} ${t})${verdict.v ? `; the last verdict is ${verdict.v}${verdict.sha === gitOut(r, ['rev-parse', H]) ? '' : ' on an older state'}` : ''}:`);
+    mode = 'propose';
+  }
   if (mode === 'propose') {
     out(`[fm] PROPOSED task ${t} (risk ${risk.level}): waiting for the captain. Deliver it with: fm.js deliver ${r} ${t} --approve`);
     out(risk.reasons.map((x) => `- ${x}`).join('\n'));
@@ -431,7 +442,7 @@ function deliverLocked(r, t, args) {
   fs.appendFileSync(path.join(notesDir(r), 'log.md'), `- ${stamp} delivered task ${t} to ${branch}, ${done === 'commit' ? `commit ${sha.slice(0, 7)}` : 'uncommitted'}: ${files.join(' ')}${clean ? '' : ' (CONFLICTS)'}\n`);
   if (clean) {
     const rows = readLedger(r);
-    rows.push([new Date().toISOString(), t, done, risk.level, 'PASS', '-', files.join(' '), sha, '']);
+    rows.push([new Date().toISOString(), t, done, risk.level, 'PASS', opt.approve ? 'captain' : (approved ? 'APPROVE' : '-'), files.join(' '), sha, '']);
     writeLedger(r, rows);
   }
   out('[fm] logged in .firstmate/notes/log.md and ledger.tsv');
@@ -698,6 +709,71 @@ function usageCmd(id, args) {
   out(formatUsage(res));
 }
 
+// ---------- judge: the dossier System 2 reads, and its verdict ----------
+const DOSSIER_MAX = 30720;
+const readNote = (r, name) => { try { return fs.readFileSync(path.join(notesDir(r), name), 'utf8').trim(); } catch { return ''; } };
+function dossier(r, t) {
+  const H = `refs/firstmate/${t}/head`;
+  if (!git(r, ['rev-parse', '-q', '--verify', H]).ok) die(`no task '${t}'`);
+  const risk = taskRisk(r, t);
+  const gateNote = readNote(r, `${t}.gate`).split(/\s+/);
+  const gateState = gateNote[0] === gitOut(r, ['rev-parse', H]) ? gateNote[1] : (gateNote[1] ? 'stale (the task changed after its gate)' : 'not run');
+  const gateLines = readNote(r, `${t}.gate.log`).split('\n').filter((l) => /^(PASS|FAIL|SKIP)  |^      /.test(l)).slice(0, 40);
+  const parts = [
+    `# DOSSIER task ${t} in ${r}`,
+    '## REQUEST', readNote(r, `${t}.request`) || '(not recorded: judge against the diff and the task name)',
+    '## DONE WHEN', readNote(r, `${t}.done`) || 'The request above, nothing more and nothing less.',
+    '## RISK', `${risk.level}`, ...risk.reasons.map((x) => `- ${x}`),
+    '## LOCKED TESTS', readLocks(r, t).map(([, p]) => `- ${p}`).join('\n') || 'none',
+    '## GATE', `gate ${gateState}`, ...gateLines,
+  ];
+  const scen = readNote(r, `${t}.scenarios`);
+  const tail = scen ? ['## SCENARIOS', scen] : [];
+  const head = `${parts.join('\n')}\n`;
+  const rv = spawnSync(process.execPath, [__filename, 'review', r, t], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  let review = (rv.stdout || rv.stderr || '').trim();
+  const room = DOSSIER_MAX - Buffer.byteLength(head) - Buffer.byteLength(tail.join('\n')) - 200;
+  if (Buffer.byteLength(review) > room) review = `${Buffer.from(review).subarray(0, Math.max(0, room)).toString('utf8').replace(/\uFFFD*$/, '')}\n... review cut to fit the dossier (fm.js review ${r} ${t} --full shows all of it)`;
+  return [head, '## REVIEW', review, ...tail].join('\n');
+}
+
+const VERDICTS = ['APPROVE', 'REVISE', 'REJECT', 'HUMAN'];
+function writeVerdict(r, t, v, reason, raise) {
+  if (!VERDICTS.includes(v)) die(`verdict must be one of ${VERDICTS.join(', ')}`);
+  const head = gitOut(r, ['rev-parse', `refs/firstmate/${t}/head`]);
+  if (!head) die(`no task '${t}'`);
+  fs.writeFileSync(path.join(notesDir(r), `${t}.verdict`), `${head} ${v}\n${reason || ''}\n`);
+  if (raise) {
+    const { maxRisk, ORDER } = require('./fm-risk.js');
+    if (!ORDER.includes(raise)) die(`risk must be one of ${ORDER.join(', ')}`);
+    const cur = readNote(r, `${t}.riskfloor`) || 'low';
+    fs.writeFileSync(path.join(notesDir(r), `${t}.riskfloor`), `${maxRisk(cur, raise)}\n`);
+  }
+}
+function verdictOf(r, t) {
+  const [sha, v] = (readNote(r, `${t}.verdict`).split('\n')[0] || '').split(/\s+/);
+  return { sha: sha || '', v: v || '' };
+}
+
+async function judgeCmd(repoArg, t, rest) {
+  const r = needRepo(repoArg); taskName(t);
+  const mi = rest.indexOf('--model');
+  const text = dossier(r, t);
+  const { crew, format, CrewError } = require('./fm-crew.js');
+  let res;
+  try { [res] = await crew(r, [{ task: t, role: 'judge', model: mi >= 0 ? rest[mi + 1] : undefined, brief: `Judge this task and answer in your verdict format.\n\n${text}` }]); }
+  catch (e) { if (e instanceof CrewError) die(e.message); throw e; }
+  out(format(res));
+  if (!res.ok) throw new Exit(1);
+  const resp = String(res.json.response || '');
+  const v = (resp.match(/^\s*VERDICT:\s*(APPROVE|REVISE|REJECT|HUMAN)\b/m) || [])[1];
+  if (!v) die(`the judge gave no VERDICT line; its report is in ${res.file}`);
+  const raise = (resp.match(/^\s*RISK:\s*(low|medium|high)\b/mi) || [])[1];
+  writeVerdict(r, t, v, `judge report: ${res.file}`, raise && raise.toLowerCase());
+  out(`[fm] verdict for task ${t}: ${v}${raise ? ` (risk raised to at least ${raise.toLowerCase()})` : ''}`);
+  if (v !== 'APPROVE') throw new Exit(1);
+}
+
 // ---------- crew: headless agy processes, one per task ----------
 async function crewCmd(repoArg, rest) {
   const r = needRepo(repoArg);
@@ -738,10 +814,18 @@ function main(argv) {
   switch (cmd) {
     case 'shape': return shape(arg, rest);
     case 'usage': return usageCmd(arg, rest);
+    case 'dossier': { const r = needRepo(arg); taskName(rest[0]); return out(dossier(r, rest[0])); }
+    case 'judge': return judgeCmd(arg, rest[0], rest.slice(1));
+    case 'verdict': {
+      const r = needRepo(arg); taskName(rest[0]);
+      const ri = rest.indexOf('--risk');
+      writeVerdict(r, rest[0], rest[1], rest[2] || '', ri >= 0 ? rest[ri + 1] : '');
+      return out(`[fm] verdict for task ${rest[0]}: ${rest[1]}`);
+    }
     case 'crew': return crewCmd(arg, rest);
     case 'init': return init(arg, rest[0]);
     case 'fact': return fact(arg, rest);
-    case 'start': return start(arg, rest[0]);
+    case 'start': return start(arg, rest[0], rest.slice(1));
     case 'save': return save(arg, rest[0], rest[1]);
     case 'gate': return gate(arg, rest[0], rest.slice(1).join(' '));
     case 'review': return review(arg, rest[0], rest[1]);
