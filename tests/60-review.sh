@@ -13,7 +13,7 @@ module.exports = (p) => toCents(p);
 ' > chart/values.yaml; printf 'memory: 512Mi
 ' > chart/values-prod.yaml
  git add -A && git -c user.name=t -c user.email=t@t commit -qm base)
-fm init "$V" >/dev/null; fm start "$V" r1 >/dev/null; VW="$V/.firstmate/wt/r1"
+fm init "$V" >/dev/null; fm start "$V" r1 >/dev/null; VW=$(fm path "$V" r1)
 printf 'function toCents(a) {
   return Math.round((a + Number.EPSILON) * 100);
 }

@@ -20,4 +20,4 @@ guard() { node -e 'process.stdout.write(JSON.stringify({conversationId:process.a
 cmdjson() { node -e 'console.log(JSON.stringify({CommandLine:process.argv[1]}))' "$1"; }
 invoke() { printf '{"conversationId":"%s","invocationNum":%s,"initialNumSteps":%s}' "$1" "$2" "$3" | node "$INJECT" invoke >/dev/null 2>&1; }
 used() { [ -f "$FM_STATE_DIR/$1.direct" ] && echo $(( $(wc -c < "$FM_STATE_DIR/$1.direct") / 2 )) || echo 0; }
-export FM_HOME="$T/fmhome"
+export FM_HOME="$T/fmhome" FM_WT_ROOT="$T/wt"

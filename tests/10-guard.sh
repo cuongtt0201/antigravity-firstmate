@@ -92,6 +92,10 @@ check "explorer+worker pinned" 2 "$(grep -o '"Model":"flash"' <<< "$OUT" | wc -l
 two() { node -e 'process.stdout.write(JSON.stringify({conversationId:"two",toolCall:{name:"invoke_subagent",args:{Subagents:[{TypeName:"worker",Prompt:"Task workspace: /r/.firstmate/wt/"+process.argv[1]+"/x"},{TypeName:"worker",Prompt:"write only in /r/.firstmate/wt/"+process.argv[2]+"/y"},{TypeName:"explorer",Prompt:"read /r/.firstmate/wt/"+process.argv[1]}]}}}))' "$1" "$2" | node "$GUARD" 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).decision))'; }
 check "two workers in one task workspace are refused" deny "$(two infra infra)"
 check "one worker per task workspace is fine" allow "$(two infra-tf infra-docs)"
+twonew() { node -e 'const p=(t)=>"Task workspace: "+process.argv[1]+"/.firstmate/wt/myrepo-1a2b3c4d/"+t+"/src";process.stdout.write(JSON.stringify({conversationId:"two2",toolCall:{name:"invoke_subagent",args:{Subagents:[{TypeName:"worker",Prompt:p(process.argv[2])},{TypeName:"worker",Prompt:p(process.argv[3])}]}}}))' "$1" "$2" "$3" | node "$GUARD" 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).decision))'; }
+check "two workers in one new-style workspace are refused" deny "$(twonew /home/u infra infra)"
+check "different new-style workspaces are fine" allow "$(twonew /home/u infra-tf infra-docs)"
+check "Windows-style workspace paths are compared" deny "$(twonew 'C:\Users\u' infra INFRA)"
 
 echo "== guard: the crew cannot forge gate results"
 check "worker may run fm.js save and gate" allow "$(guard wk run_command "$(cmdjson "cd /r/.firstmate/wt/t && node \"$FMJS\" save /r t x && node \"$FMJS\" gate /r t 'npm test'")")"

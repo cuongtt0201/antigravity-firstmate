@@ -171,16 +171,25 @@ function mcpPolicy(tool, args, agent) {
   return { decision: 'force_ask', reason: `[guard] ${label} ${kind === 'change' ? 'changes data or infrastructure' : 'is not a recognised read'}; the captain must approve it.` };
 }
 
+// The task workspace a brief names, as "<repo-key>/<task>" (workspaces outside the repo, v1) or "<task>"
+// (v0.12, inside the repo), lower-cased so Windows paths compare too; '' when the brief names none.
+const REPO_KEY_RE = /^[A-Za-z0-9._-]+-[0-9a-f]{8}$/;
+function workspaceKey(prompt) {
+  const m = String(prompt || '').match(/\.firstmate[\\/]+wt[\\/]+([^\s"'`\\/]+)(?:[\\/]+([^\s"'`\\/]+))?/);
+  if (!m) return '';
+  return (REPO_KEY_RE.test(m[1]) && m[2] ? `${m[1]}/${m[2]}` : m[1]).toLowerCase();
+}
+
 // The task workspace two or more parallel workers in one invoke_subagent call would share, or ''.
 function sharedTask(args) {
   if (!Array.isArray(args.Subagents)) return '';
   const seen = new Set();
   for (const s of args.Subagents) {
     if (!s || String(s.TypeName) !== 'worker') continue;
-    const m = String(s.Prompt || s.prompt || '').match(/\.firstmate[\\/]+wt[\\/]+([a-z0-9][a-z0-9-]*)/);
-    if (!m) continue;
-    if (seen.has(m[1])) return m[1];
-    seen.add(m[1]);
+    const k = workspaceKey(s.Prompt || s.prompt);
+    if (!k) continue;
+    if (seen.has(k)) return k;
+    seen.add(k);
   }
   return '';
 }
@@ -237,7 +246,7 @@ function main() {
     if (st.subagents + n > MAX_SUBAGENTS) {
       decision = { decision: 'deny', reason: `[guard] This chat already launched ${st.subagents} subagents (cap ${MAX_SUBAGENTS} per day). Report what you have to the captain and ask before launching more.` };
     } else if (sharedTask(args)) {
-      decision = { decision: 'deny', reason: `[guard] Two or more workers in this call share the task workspace .firstmate/wt/${sharedTask(args)}. Give each independent part its own task (fm.js start <repo> <task> once per part), then send one worker per task.` };
+      decision = { decision: 'deny', reason: `[guard] Two or more workers in this call share the task workspace ${sharedTask(args)}. Give each independent part its own task (fm.js start <repo> <task> once per part), then send one worker per task.` };
     } else {
       st.subagents += n;
       if (Array.isArray(args.Subagents)) {

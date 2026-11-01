@@ -3,13 +3,16 @@
 //   fm.js init    <repo> [--new-repo]        exclude .firstmate/ locally, create facts.md, show state
 //                                             (a folder that is not a git repo needs --new-repo, after the captain agrees)
 //   fm.js fact    <repo> "<fact>" ["<fact>"…]  add dated lines to .firstmate/facts.md (skips duplicates)
-//   fm.js start   <repo> <task>              detached worktree at <repo>/.firstmate/wt/<task>
+//   fm.js start   <repo> <task>              detached worktree at <FM_WT_ROOT>/<repo-key>/<task> (outside the repo)
 //   fm.js save    <repo> <task> "<message>"  commit the task's changes inside the task
 //   fm.js gate    <repo> <task> [command]    run checks (auto-detected, or the given command)
 //   fm.js review  <repo> <task> [--full]     diff, uses of the changed names, related unchanged files, checklist
 //   fm.js deliver <repo> <task> [--keep]     apply the task diff to the captain's checkout, uncommitted
+//   fm.js path    <repo> <task>              the task's workspace folder
 //   fm.js status  <repo>
 //   fm.js clean   <repo> <task|--all>
+//   fm.js clean   <repo> --legacy [--yes] [--force]  list (and remove) worker branches left by v0.7 and Antigravity worktrees
+//   fm.js sweep   <repo> [--hours N] [--yes]  list (and remove) tasks idle for N hours (24) or whose workspace is gone
 //   fm.js shape   <brief.md> [--sections] [file]  word counts of a /best brief's deliverables and drafts vs their limits
 //   fm.js usage   <conversation-id> [--brain <dir>]...  tokens per chat and subagent, and the strong model's share
 // Tasks live in refs/firstmate/<task>/{base,head}, never in refs/heads, so `git branch` and pushes never see them.
@@ -19,9 +22,12 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { wtRoot, taskDir, notesDir } = require('./fm-paths.js');
+const { withLock } = require('./fm-lock.js');
 
 const ID = ['-c', 'user.name=firstmate', '-c', 'user.email=firstmate@local'];
 const PROTECTED_RE = /^(main|master|prod|production|prod-.*|release\/.*)$/;
+const PORT_BASE = 3100;
 const DEP_NAMES = new Set(['node_modules', '.venv', 'venv', 'vendor', '.env', '.env.local', '.env.test', '.env.development', '.env.development.local', '.env.test.local']);
 
 // sandboxed agents may not read ~/.gitconfig; fall back to no global config
@@ -135,7 +141,6 @@ function init(repoArg, flag) {
   const r = needRepo(repoArg);
   const ex = excludeFile(r);
   if (!excludeHas(ex, '.firstmate/')) excludeAdd(ex, '\n# firstmate workspace (this machine only)\n.firstmate/\n');
-  fs.mkdirSync(path.join(r, '.firstmate', 'wt'), { recursive: true });
   fs.mkdirSync(path.join(r, '.firstmate', 'notes'), { recursive: true });
   const facts = path.join(r, '.firstmate', 'facts.md');
   if (!fs.existsSync(facts)) fs.writeFileSync(facts, '# Facts about this repo (kept by the first mate; local only, never committed)\n# One line per fact, newest last: "- <fact> (source or date)". Correct wrong lines instead of adding contradictions.\n');
@@ -177,11 +182,30 @@ function linkDep(src, dst) {
   catch (e) { if (isDir) throw e; fs.copyFileSync(src, dst); }
 }
 
+// ---------- slots: each live task gets a small number, so parallel checks can use their own port ----------
+const slotFile = (r, t) => path.join(notesDir(r), `${t}.slot`);
+function allocSlot(r, t) {
+  const used = new Set();
+  try { for (const f of fs.readdirSync(notesDir(r))) if (f.endsWith('.slot')) used.add(Number(fs.readFileSync(path.join(notesDir(r), f), 'utf8').trim())); } catch {}
+  let n = 0; while (used.has(n)) n += 1;
+  fs.mkdirSync(notesDir(r), { recursive: true });
+  fs.writeFileSync(slotFile(r, t), `${n}\n`);
+  return n;
+}
+function slotOf(r, t) { try { return Number(fs.readFileSync(slotFile(r, t), 'utf8').trim()) || 0; } catch { return 0; } }
+function touchSlot(r, t) { try { const now = new Date(); fs.utimesSync(slotFile(r, t), now, now); } catch {} }
+const slotEnv = (r, t) => ({ ...process.env, FIRSTMATE_SLOT: String(slotOf(r, t)), PORT: String(PORT_BASE + slotOf(r, t)) });
+
 function start(repoArg, t) {
   const r = needRepo(repoArg); taskName(t);
-  const w = path.join(r, '.firstmate', 'wt', t);
-  if (fs.existsSync(w)) die(`task '${t}' already exists at ${w} (use another name, or: fm.js clean ${r} ${t})`);
+  withLock(r, () => startLocked(r, t));
+}
+function startLocked(r, t) {
+  const w = taskDir(r, t);
+  if (fs.existsSync(w) || git(r, ['rev-parse', '-q', '--verify', `refs/firstmate/${t}/head`]).ok) die(`task '${t}' already exists at ${w} (use another name, or: fm.js clean ${r} ${t})`);
   if (!fs.existsSync(path.join(r, '.firstmate'))) die(`run: fm.js init ${r}`);
+  try { fs.mkdirSync(path.dirname(w), { recursive: true }); fs.accessSync(path.dirname(w), fs.constants.W_OK); }
+  catch (e) { die(`cannot create the task workspace folder ${path.dirname(w)} (${e.code || e.message}). Set FM_WT_ROOT to a folder the agents may write to (now: ${wtRoot()}).`); }
   const base = gitOut(r, ['rev-parse', 'HEAD']);
   const add = git(r, ['worktree', 'add', '-q', '--detach', w, base]);
   if (!add.ok) die(`git worktree add failed: ${add.err}`);
@@ -198,14 +222,15 @@ function start(repoArg, t) {
     try { linkDep(path.join(r, p), dst); linked += 1; } catch { continue; }
     if (!excludeHas(ex, `/${p}`)) excludeAdd(ex, `/${p}\n`);
   }
-  out(`[fm] task ${t}: workspace ${w} (from ${gitOut(r, ['log', '-1', '--format=%h %s', base])})`);
+  const slot = allocSlot(r, t);
+  out(`[fm] task ${t}: workspace ${w} (from ${gitOut(r, ['log', '-1', '--format=%h %s', base])}), slot ${slot} (PORT ${PORT_BASE + slot} in checks)`);
   if (linked) out(`[fm] linked ${linked} git-ignored dependency/env path(s) from your checkout (node_modules, .venv, .env...)`);
   if (gitOut(r, ['status', '--porcelain'])) out("[fm] note: the captain's uncommitted changes are NOT in this workspace");
 }
 
 function save(repoArg, t, msg) {
   const r = needRepo(repoArg); taskName(t);
-  const w = path.join(r, '.firstmate', 'wt', t);
+  const w = taskDir(r, t); touchSlot(r, t);
   if (!fs.existsSync(w)) die(`no workspace for task '${t}'`);
   git(w, ['add', '-A']);
   if (git(w, ['diff', '--cached', '--quiet']).ok) out('[fm] no new changes to save');
@@ -218,7 +243,7 @@ function save(repoArg, t, msg) {
 
 function gate(repoArg, t, cmd) {
   const r = needRepo(repoArg); taskName(t);
-  const w = path.join(r, '.firstmate', 'wt', t);
+  const w = taskDir(r, t); touchSlot(r, t);
   if (!fs.existsSync(w)) die(`no workspace for task '${t}'`);
   if (gitOut(w, ['status', '--porcelain'])) die(`task '${t}' has unsaved changes; run: fm.js save ${r} ${t} "<message>"`);
   const headc = gitOut(w, ['rev-parse', 'HEAD']);
@@ -228,7 +253,7 @@ function gate(repoArg, t, cmd) {
   let pass; let log;
   if (cmd) {
     out(`[fm] gate ${t}: running given check in ${w}: ${cmd}`);
-    const res = spawnSync(cmd, { cwd: w, shell: true, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    const res = spawnSync(cmd, { cwd: w, shell: true, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: slotEnv(r, t) });
     log = `${res.stdout || ''}${res.stderr || ''}`; pass = res.status === 0;
     out(log.split('\n').slice(-40).join('\n'));
   } else {
@@ -250,9 +275,12 @@ function gate(repoArg, t, cmd) {
 
 function deliver(repoArg, t, keep) {
   const r = needRepo(repoArg); taskName(t);
+  return withLock(r, () => deliverLocked(r, t, keep));
+}
+function deliverLocked(r, t, keep) {
   const B = `refs/firstmate/${t}/base`; const H = `refs/firstmate/${t}/head`;
   if (!git(r, ['rev-parse', '-q', '--verify', H]).ok) die(`no task '${t}'`);
-  const w = path.join(r, '.firstmate', 'wt', t);
+  const w = taskDir(r, t);
   if (fs.existsSync(w) && gitOut(w, ['status', '--porcelain'])) die(`task '${t}' has unsaved changes; save and gate first`);
   const note = path.join(r, '.firstmate', 'notes', `${t}.gate`);
   let gsha; let gv;
@@ -294,7 +322,7 @@ function deliver(repoArg, t, keep) {
   if (keep !== '--keep' && clean) {
     if (fs.existsSync(w)) git(r, ['worktree', 'remove', '--force', w]);
     git(r, ['update-ref', '-d', B]); git(r, ['update-ref', '-d', H]);
-    fs.rmSync(note, { force: true }); fs.rmSync(`${note}.log`, { force: true });
+    fs.rmSync(note, { force: true }); fs.rmSync(`${note}.log`, { force: true }); fs.rmSync(slotFile(r, t), { force: true });
     out(`[fm] task ${t} removed`);
   }
   if (!clean) throw new Exit(1);
@@ -308,24 +336,74 @@ function status(repoArg) {
   const tasks = taskNames(r, /^refs\/firstmate\/(.*)\/head$/);
   if (!tasks.length) { out('[fm] no tasks'); return; }
   for (const t of tasks) {
-    const w = path.join(r, '.firstmate', 'wt', t); const note = path.join(r, '.firstmate', 'notes', `${t}.gate`);
+    const w = taskDir(r, t); const note = path.join(r, '.firstmate', 'notes', `${t}.gate`);
     let g = '-'; try { g = fs.readFileSync(note, 'utf8').trim().split(/\s+/)[1]; } catch {}
     const d = fs.existsSync(w) ? (gitOut(w, ['status', '--porcelain']) ? 'unsaved' : 'saved') : 'missing';
     out(`  ${t} | workspace: ${d} | gate: ${g} | ${gitOut(r, ['diff', '--shortstat', `refs/firstmate/${t}/base`, `refs/firstmate/${t}/head`]).trim()}`);
   }
 }
 
-function clean(repoArg, which) {
+function removeTask(r, t) {
+  const w = taskDir(r, t);
+  if (fs.existsSync(w)) { if (!git(r, ['worktree', 'remove', '--force', w]).ok) fs.rmSync(w, { recursive: true, force: true }); }
+  for (const k of ['base', 'head']) git(r, ['update-ref', '-d', `refs/firstmate/${t}/${k}`]);
+  for (const f of [`${t}.gate`, `${t}.gate.log`, `${t}.slot`]) fs.rmSync(path.join(notesDir(r), f), { force: true });
+  out(`[fm] removed task ${t}`);
+}
+
+function clean(repoArg, args) {
   const r = needRepo(repoArg);
-  const tasks = which === '--all' ? taskNames(r, /^refs\/firstmate\/([^/]*)\//) : [taskName(which)];
-  for (const t of tasks) {
-    const w = path.join(r, '.firstmate', 'wt', t);
-    if (fs.existsSync(w)) git(r, ['worktree', 'remove', '--force', w]);
-    for (const k of ['base', 'head']) git(r, ['update-ref', '-d', `refs/firstmate/${t}/${k}`]);
-    for (const f of [`${t}.gate`, `${t}.gate.log`]) fs.rmSync(path.join(r, '.firstmate', 'notes', f), { force: true });
-    out(`[fm] removed task ${t}`);
+  if (args.includes('--legacy')) return cleanLegacy(r, args.includes('--yes'), args.includes('--force'));
+  const which = args[0];
+  withLock(r, () => {
+    const tasks = which === '--all' ? taskNames(r, /^refs\/firstmate\/([^/]*)\//) : [taskName(which)];
+    for (const t of tasks) removeTask(r, t);
+    git(r, ['worktree', 'prune']);
+  });
+}
+
+// Worker branches from v0.7 (subagent-*) and worktrees the Antigravity App created under ~/.gemini/antigravity*/
+// worktrees. Listed by default; --yes removes the merged ones, --force also the unmerged ones.
+function cleanLegacy(r, yes, force) {
+  const home = path.join(os.homedir(), '.gemini').split(path.sep).join('/');
+  const wts = {}; let cur = null;
+  for (const l of lines(gitOut(r, ['worktree', 'list', '--porcelain']))) {
+    if (l.startsWith('worktree ')) cur = l.slice(9);
+    else if (l.startsWith('branch refs/heads/') && cur) wts[l.slice(18)] = cur;
   }
-  git(r, ['worktree', 'prune']);
+  const branches = new Set(lines(gitOut(r, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/subagent-*'])));
+  for (const [b, w] of Object.entries(wts)) if (w.split(path.sep).join('/').startsWith(`${home}/antigravity`) && /\/worktrees\//.test(w)) branches.add(b);
+  if (!branches.size) { out('[fm] no legacy worker branches'); return; }
+  withLock(r, () => {
+    for (const b of [...branches].sort()) {
+      const merged = git(r, ['merge-base', '--is-ancestor', b, 'HEAD']).ok;
+      const w = wts[b];
+      if (!yes || (!merged && !force)) { out(`  ${b} | ${merged ? 'merged' : 'unmerged'}${w ? ` | worktree ${w}` : ''}${yes ? ' | kept (unmerged; --force removes it)' : ''}`); continue; }
+      if (w) git(r, ['worktree', 'remove', '--force', w]);
+      git(r, ['branch', '-D', b]);
+      out(`  ${b} | ${merged ? 'merged' : 'unmerged'} | removed`);
+    }
+    git(r, ['worktree', 'prune']);
+  });
+  if (!yes) out('[fm] dry run: add --yes to remove the merged branches (and --force for the unmerged ones)');
+}
+
+function sweep(repoArg, args) {
+  const r = needRepo(repoArg);
+  const hi = args.indexOf('--hours'); const hours = hi >= 0 ? Number(args[hi + 1]) || 24 : 24;
+  const yes = args.includes('--yes');
+  const now = Date.now(); const stale = [];
+  for (const t of taskNames(r, /^refs\/firstmate\/(.*)\/head$/)) {
+    const w = taskDir(r, t);
+    if (!fs.existsSync(w)) { stale.push([t, 'workspace missing']); continue; }
+    let m; try { m = fs.statSync(slotFile(r, t)).mtimeMs; } catch { m = fs.statSync(w).mtimeMs; }
+    const age = (now - m) / 3600000;
+    if (age > hours) stale.push([t, `idle ${Math.floor(age)} h`]);
+  }
+  if (!stale.length) { out(`[fm] nothing idle for more than ${hours} h`); return; }
+  for (const [t, why] of stale) out(`  ${t} | ${why}`);
+  if (!yes) { out('[fm] dry run: add --yes to remove these tasks'); return; }
+  withLock(r, () => { for (const [t] of stale) removeTask(r, t); git(r, ['worktree', 'prune']); });
 }
 
 // ---------- review ----------
@@ -377,7 +455,7 @@ function review(repoArg, t, opt) {
   const r = needRepo(repoArg); taskName(t);
   const B = `refs/firstmate/${t}/base`; const H = `refs/firstmate/${t}/head`;
   if (!git(r, ['rev-parse', '-q', '--verify', H]).ok) die(`no task '${t}'`);
-  const w = path.join(r, '.firstmate', 'wt', t);
+  const w = taskDir(r, t);
   if (fs.existsSync(w) && gitOut(w, ['status', '--porcelain'])) die(`task '${t}' has unsaved changes; run: fm.js save ${r} ${t} "<message>"`);
   const files = lines(gitOut(r, ['diff', '--name-only', B, H]));
   if (!files.length) die(`task '${t}' has no changes`);
@@ -473,7 +551,9 @@ function main(argv) {
     case 'review': return review(arg, rest[0], rest[1]);
     case 'deliver': return deliver(arg, rest[0], rest[1]);
     case 'status': return status(arg);
-    case 'clean': return clean(arg, rest[0]);
+    case 'clean': return clean(arg, rest);
+    case 'sweep': return sweep(arg, rest);
+    case 'path': { const r = needRepo(arg); taskName(rest[0]); return out(taskDir(r, rest[0])); }
     default: return die(`unknown command '${cmd}'`);
   }
 }
