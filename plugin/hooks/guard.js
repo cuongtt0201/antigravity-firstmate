@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // flash-ultra guard (PreToolUse). Its jobs:
 //  1. Tamper protection: agents may not edit or disable this plugin or the hook config.
-//  2. Live-system safety: commands that change clusters, cloud resources, buckets or the git remote are
-//     denied (the captain runs them); remote shells and production pod shells need the captain's approval.
+//  2. Command policy by pack (policy/): core for every developer (no push or publish, no destroying the
+//     captain's uncommitted work, no secrets, prod databases ask) and devops (clusters, cloud, buckets are read-only).
 //  3. Pin worker/checker subagents to Flash, and cap subagent launches per chat.
 //  4. Loop guard: deny the 4th identical read of an unchanged file; nudge after 40 reads in a row.
 //  5. First-mate budget: in chats run by the firstmate agent, each read tool call or command counts 1
@@ -49,82 +49,36 @@ function pick(obj, keys) {
   return '';
 }
 
-// ---------- live-system command policy ----------
-const WRAPPERS = new Set(['sudo', 'time', 'nohup', 'exec', 'command', 'env', 'xargs', 'watch']);
-const SHELLS = new Set(['bash', 'sh', 'zsh']);
+// ---------- command and write policy, by pack (core always; devops unless the config leaves it out) ----------
+const shell = require('./policy/shell');
+const core = require('./policy/core');
+const devops = require('./policy/devops');
+const { repoOfWorkspace } = require('../scripts/fm-paths.js');
 
-function words(seg) {
-  let w = seg.trim().split(/\s+/).map((x) => x.replace(/^[('"{]+|[)'"};]+$/g, '')).filter(Boolean);
-  while (w.length) {
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w[0]) || WRAPPERS.has(w[0])) { w.shift(); continue; }
-    if (w[0] === 'timeout') { w.splice(0, 2); continue; }
-    break;
-  }
-  if (w.length) w[0] = w[0].split(/[\\/]/).pop();
-  if (SHELLS.has(w[0]) && w[1] === '-c') return words(w.slice(2).join(' '));
-  return w;
+function deciders(seg) {
+  const s = seg.trim().slice(0, 160);
+  return {
+    deny: (what) => ({ decision: 'deny', reason: `[guard] "${s}" ${what}. Agents never run this. Give the captain the exact command to run, and continue from the output they paste.` }),
+    ask: (what) => ({ decision: 'force_ask', reason: `[guard] "${s}" ${what}; the captain must approve it.` }),
+  };
 }
 
-// first non-flag word after the program name, skipping the values of flags that take one
-function sub(w, valueFlags) {
-  for (let i = 1; i < w.length; i++) {
-    const t = w[i];
-    if (t.startsWith('-')) { if (!t.includes('=') && valueFlags.has(t)) i++; continue; }
-    return { name: t, rest: w.slice(i + 1) };
+// The repo a folder belongs to (the main checkout, also for a task workspace), or ''.
+function repoRootOf(dir) {
+  if (!dir) return '';
+  const ws = repoOfWorkspace(dir);
+  if (ws) return ws.repo;
+  let d = path.resolve(String(dir));
+  for (;;) {
+    try { if (fs.statSync(path.join(d, '.git')).isDirectory()) return d; } catch {}
+    const up = path.dirname(d);
+    if (up === d) return '';
+    d = up;
   }
-  return { name: '', rest: [] };
 }
 
-const KUBE_FLAGS = new Set(['-n', '--namespace', '--context', '--kubeconfig', '--cluster', '--user', '-s', '--server', '--as', '--token', '--request-timeout']);
-// kubectl: agents only read the cluster; every change goes through GitOps. Anything not on this list is denied.
-const KUBE_READ = new Set(['get', 'describe', 'logs', 'top', 'events', 'explain', 'api-resources', 'api-versions', 'version', 'cluster-info']);
-const KUBE_READ_SUB = { config: ['view', 'get-contexts', 'current-context', 'get-clusters'], auth: ['can-i', 'whoami'], rollout: ['status', 'history'] };
-const HELM_DENY = new Set(['install', 'upgrade', 'uninstall', 'delete', 'rollback', 'push']);
-const HELMFILE_DENY = new Set(['apply', 'sync', 'destroy', 'delete', 'deps']);
-const TF_DENY = new Set(['apply', 'destroy', 'import', 'taint', 'untaint', 'force-unlock']);
-const GCLOUD_DENY = new Set(['create', 'delete', 'update', 'deploy', 'resize', 'set-iam-policy', 'add-iam-policy-binding', 'remove-iam-policy-binding',
-  'reset', 'stop', 'start', 'suspend', 'resume', 'rollback', 'import', 'patch', 'move', 'rename', 'restore', 'set-machine-type',
-  'attach-disk', 'detach-disk', 'add-tags', 'remove-tags', 'add-metadata', 'remove-metadata', 'rm', 'mv', 'rsync']);
-const GSUTIL_DENY = new Set(['rm', 'mv', 'setmeta', 'acl', 'iam', 'defacl', 'lifecycle', 'retention']);
-
-// "prod" or "production" as a whole name part (prod-core, gke_prod, -n production), not "products"
-const PROD_RE = /(^|[\s/=_.:-])prod(uction)?([\s/=_.:-]|$)/i;
-const toBucket = (w) => { const args = w.slice(1).filter((x) => !x.startsWith('-')); return /^gs:\/\//.test(args[args.length - 1] || ''); };
-
-function judge(seg) {
-  const w = words(seg);
-  const p = w[0];
-  if (!p) return null;
-  const s = (vf = new Set()) => sub(w, vf);
-  const deny = (what) => ({ decision: 'deny', reason: `[guard] "${seg.trim().slice(0, 160)}" ${what}. Agents never run this. Give the captain the exact command to run, and continue from the output they paste.` });
-  const ask = (what) => ({ decision: 'force_ask', reason: `[guard] "${seg.trim().slice(0, 160)}" ${what}; the captain must approve it.` });
-
-  if (p === 'git') {
-    if (s(new Set(['-C', '-c', '--git-dir', '--work-tree'])).name === 'push') return deny('pushes to the remote');
-  } else if (p === 'kubectl' || p === 'oc') {
-    const { name, rest } = s(KUBE_FLAGS);
-    if (!name || KUBE_READ.has(name)) return null;
-    if (KUBE_READ_SUB[name] && KUBE_READ_SUB[name].includes(rest.find((x) => !x.startsWith('-')))) return null;
-    return deny(`is not a read (agents may only run kubectl ${[...KUBE_READ].join(', ')}, config view, auth can-i, rollout status; changes, exec and port-forward go through GitOps or the captain)`);
-  } else if (p === 'helm') {
-    if (HELM_DENY.has(s(new Set(['-n', '--namespace', '--kube-context', '--kubeconfig'])).name)) return deny('changes a Helm release');
-  } else if (p === 'helmfile') {
-    if (w.some((x) => HELMFILE_DENY.has(x))) return deny('applies Helm releases');
-  } else if (p === 'terraform' || p === 'tofu' || p === 'terragrunt') {
-    const i = w.indexOf('state');
-    if (w.some((x) => TF_DENY.has(x)) || (i > 0 && ['rm', 'mv', 'push', 'replace-provider'].includes(w[i + 1]))) return deny('changes infrastructure or its state');
-  } else if (p === 'gcloud') {
-    if (w[1] === 'config' || w[1] === 'auth') return null;
-    if (w.includes('ssh') || w.includes('scp')) return ask('opens a remote shell');
-    if (w.includes('cp') && toBucket(w)) return deny('writes to a bucket');
-    if (w.slice(1).some((x) => !x.startsWith('-') && GCLOUD_DENY.has(x))) return deny('changes cloud resources');
-  } else if (p === 'gsutil') {
-    const { name } = s(new Set(['-o', '-h', '-u']));
-    if (GSUTIL_DENY.has(name) || (['cp', 'rsync'].includes(name) && toBucket(w))) return deny('changes a bucket');
-  } else if (p === 'ssh' || p === 'scp' || (p === 'rsync' && w.slice(1).some((x) => /^[^-/][^\s]*:/.test(x)))) {
-    return ask('runs on a remote host');
-  }
-  return null;
+function packsFor(dir) {
+  try { return require('../scripts/fm-config.js').loadConfig(repoRootOf(dir) || undefined).packs || ['core', 'devops']; } catch { return ['core', 'devops']; }
 }
 
 // MCP tools. Only tools whose name reads as a read (get, list, read, search, …, or *read_only*) pass;
@@ -211,9 +165,16 @@ function lockedTarget(tool, args, target, cmd) {
   return hit ? { task: ws.task, path: hit } : null;
 }
 
-function commandPolicy(cmd) {
-  for (const seg of cmd.split(/&&|\|\||;|\||\n|`|\$\(/)) {
-    const d = judge(seg);
+function commandPolicy(cmd, cwd0) {
+  const secret = core.findSecret(cmd);
+  if (secret) return { decision: 'deny', reason: `[guard] This command carries ${secret} in its text. Never put secrets on a command line: the captain stores them (for AWS: aws configure --profile <name>) and commands refer to the profile.` };
+  const packs = packsFor(cwd0);
+  let cwd = cwd0 ? String(cwd0) : '';
+  for (const seg of shell.segments(cmd)) {
+    const w = shell.words(seg);
+    if (w[0] === 'cd' && w[1]) { cwd = path.resolve(cwd || '.', w[1]); continue; }
+    const ctx = { cwd, inWorkspace: !!(cwd && repoOfWorkspace(cwd)) };
+    const d = core.judgeCommand(seg, ctx, deciders(seg)) || (packs.includes('devops') ? devops.judge(seg, deciders(seg)) : null);
     if (d) return d;
   }
   return null;
@@ -237,7 +198,12 @@ function main() {
     return out({ decision: 'deny', reason: '[guard] This is the user\'s guardrail (flash-ultra plugin / hook config). You may not modify or disable it. If you are blocked, tell the user.' });
   }
   if (tool === 'run_command') {
-    const d = commandPolicy(cmd);
+    const d = commandPolicy(cmd, args.Cwd);
+    if (d) return out(d);
+  }
+  if (WRITE_TOOLS.has(tool)) {
+    const where = pick(args, ['Path', 'AbsolutePath', 'TargetFile', 'filePath', 'path']);
+    const d = core.judgeWrite(where, args, deciders(where || tool));
     if (d) return out(d);
   }
 
