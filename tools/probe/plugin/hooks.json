@@ -1,0 +1,19 @@
+{
+  "fm-probe": {
+    "PreToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "\"{{NODE}}\" \"{{PROBE_DIR}}/probe.js\" PreToolUse || echo '{}'", "timeout": 5 } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "\"{{NODE}}\" \"{{PROBE_DIR}}/probe.js\" PostToolUse || echo '{}'", "timeout": 5 } ] }
+    ],
+    "SessionStart": [
+      { "type": "command", "command": "\"{{NODE}}\" \"{{PROBE_DIR}}/probe.js\" SessionStart || echo '{}'", "timeout": 5 }
+    ],
+    "PreInvocation": [
+      { "type": "command", "command": "\"{{NODE}}\" \"{{PROBE_DIR}}/probe.js\" PreInvocation || echo '{}'", "timeout": 5 }
+    ],
+    "Stop": [
+      { "type": "command", "command": "\"{{NODE}}\" \"{{PROBE_DIR}}/probe.js\" Stop || echo '{}'", "timeout": 5 }
+    ]
+  }
+}

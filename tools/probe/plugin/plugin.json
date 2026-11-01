@@ -1,0 +1,6 @@
+{
+  "name": "fm-probe",
+  "displayName": "firstmate probe",
+  "version": "0.0.1",
+  "description": "Survey plugin for the firstmate v1 move to the Antigravity IDE: logs hook payloads and tests hook decisions. Remove after the survey."
+}
