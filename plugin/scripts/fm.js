@@ -12,6 +12,8 @@
 //   fm.js undo    <repo> <task>              revert the task's commit, or reverse its uncommitted patch
 //   fm.js path    <repo> <task>              the task's workspace folder
 //   fm.js risk    <repo> <task>              low | medium | high, from the files and size of the change
+//   fm.js detect  <repo> [--write]           the project's typecheck, lint and test commands (stored as checks with --write)
+//   fm.js lock    <repo> <task> <path>...    acceptance tests the worker may not change; the gate fails if they do
 //   fm.js config  <repo> [key [value]]       print the settings (defaults < ~/.firstmate/config.json < repo), one key, or set one
 //   fm.js status  <repo>
 //   fm.js clean   <repo> <task|--all>
@@ -260,6 +262,7 @@ function gate(repoArg, t, cmd) {
   const note = path.join(r, '.firstmate', 'notes', `${t}.gate`);
   fs.mkdirSync(path.dirname(note), { recursive: true });
   let pass; let log;
+  const locked = checkLocks(r, t, w);
   if (cmd) {
     out(`[fm] gate ${t}: running given check in ${w}: ${cmd}`);
     const res = spawnSync(cmd, { cwd: w, shell: true, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: slotEnv(r, t) });
@@ -267,8 +270,11 @@ function gate(repoArg, t, cmd) {
     out(log.split('\n').slice(-40).join('\n'));
   } else {
     ({ pass, log } = require('./fm-checks.js').runChecks(w, `refs/firstmate/${t}/base`, r));
+    const proj = projectChecks(r, t, w);
+    pass = pass && proj.pass; log = [log, ...proj.lines].filter(Boolean).join('\n');
     out(log);
   }
+  if (locked.length) { pass = false; log = `${locked.join('\n')}\n${log}`; out(locked.join('\n')); }
   fs.writeFileSync(`${note}.log`, log);
   const left = gitOut(w, ['status', '--porcelain']);
   if (left) {
@@ -280,6 +286,53 @@ function gate(repoArg, t, cmd) {
   fs.writeFileSync(note, `${headc} ${v}\n`);
   out(`[fm] gate ${t}: ${v}`);
   if (!pass) throw new Exit(1);
+}
+
+// The project's own checks from the config (typecheck, lint, test), each with a time limit and the task's slot.
+function projectChecks(r, t, w) {
+  const cfg = loadConfig(r); const res = []; let pass = true;
+  for (const name of ['typecheck', 'lint', 'test']) {
+    const cmd = cfg.checks && cfg.checks[name];
+    if (!cmd) continue;
+    const limit = (Number(cfg.checkTimeoutSec) || 600) * 1000;
+    const x = spawnSync(cmd, { cwd: w, shell: true, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: slotEnv(r, t), timeout: limit });
+    if (x.status === 0) { res.push(`PASS  check ${name}: ${cmd}`); continue; }
+    pass = false;
+    res.push(`FAIL  check ${name}: ${cmd}${x.error && x.error.code === 'ETIMEDOUT' ? ` (timed out after ${limit / 1000}s)` : ''}`);
+    res.push(...`${x.stdout || ''}${x.stderr || ''}`.trim().split('\n').slice(-25).map((l) => `      ${l}`));
+  }
+  return { pass, lines: res };
+}
+
+// ---------- locked acceptance tests: files the worker may not change ----------
+const lockFile = (r, t) => path.join(notesDir(r), `${t}.locked`);
+const sha256 = (f) => require('crypto').createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+function readLocks(r, t) {
+  try { return fs.readFileSync(lockFile(r, t), 'utf8').split('\n').filter(Boolean).map((l) => { const i = l.indexOf('  '); return [l.slice(0, i), l.slice(i + 2)]; }); } catch { return []; }
+}
+function lock(repoArg, t, files) {
+  const r = needRepo(repoArg); taskName(t);
+  const w = taskDir(r, t);
+  if (!fs.existsSync(w)) die(`no workspace for task '${t}'`);
+  if (!files.length) die('usage: fm.js lock <repo> <task> <path>...');
+  const locks = new Map(readLocks(r, t).map(([h, p]) => [p, h]));
+  for (const f of files) {
+    const rel = path.relative(w, path.resolve(w, f)).split(path.sep).join('/');
+    if (!fs.existsSync(path.join(w, rel))) die(`${rel} does not exist in task '${t}'`);
+    locks.set(rel, sha256(path.join(w, rel)));
+    out(`[fm] locked ${rel} for task ${t}`);
+  }
+  fs.mkdirSync(notesDir(r), { recursive: true });
+  fs.writeFileSync(lockFile(r, t), [...locks].map(([p, h]) => `${h}  ${p}`).join('\n') + '\n');
+}
+function checkLocks(r, t, w) {
+  const bad = [];
+  for (const [h, p] of readLocks(r, t)) {
+    const f = path.join(w, p);
+    if (!fs.existsSync(f)) bad.push(`FAIL  locked ${p} deleted after lock`);
+    else if (sha256(f) !== h) bad.push(`FAIL  locked ${p} changed after lock`);
+  }
+  return bad;
 }
 
 function deliver(repoArg, t, args) {
@@ -659,6 +712,15 @@ function main(argv) {
     case 'status': return status(arg);
     case 'clean': return clean(arg, rest);
     case 'sweep': return sweep(arg, rest);
+    case 'lock': return lock(arg, rest[0], rest.slice(1));
+    case 'detect': {
+      const r = needRepo(arg); const found = require('./fm-detect.js').detectChecks(r);
+      const names = Object.keys(found);
+      if (!names.length) return out('[fm] no project checks found (package.json scripts, tsconfig, go.mod, Cargo.toml, pytest, Makefile)');
+      for (const k of names) out(`${k}: ${found[k]}`);
+      if (rest.includes('--write')) { for (const k of names) setRepoConfig(r, `checks.${k}`, JSON.stringify(found[k])); out('[fm] stored as checks in .firstmate/config.json'); }
+      return undefined;
+    }
     case 'risk': { const r = needRepo(arg); taskName(rest[0]); const res = taskRisk(r, rest[0]); return out([`RISK: ${res.level}`, ...res.reasons.map((x) => `- ${x}`)].join('\n')); }
     case 'config': {
       const r = needRepo(arg);

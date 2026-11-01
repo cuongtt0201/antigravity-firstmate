@@ -194,6 +194,23 @@ function sharedTask(args) {
   return '';
 }
 
+// The locked file a write would change, as { task, path }, or null.
+function lockedTarget(tool, args, target, cmd) {
+  const { repoOfWorkspace } = require('../scripts/fm-paths.js');
+  const where = WRITE_TOOLS.has(tool) ? target : (tool === 'run_command' && WRITE_CMD_RE.test(cmd) ? String(args.Cwd || '') : '');
+  if (!where) return null;
+  const ws = repoOfWorkspace(where);
+  if (!ws) return null;
+  let locks = [];
+  try { locks = fs.readFileSync(path.join(ws.repo, '.firstmate', 'notes', `${ws.task}.locked`), 'utf8').split('\n').filter(Boolean).map((l) => l.slice(l.indexOf('  ') + 2)); } catch { return null; }
+  if (WRITE_TOOLS.has(tool)) {
+    const rel = path.relative(ws.root, path.resolve(target)).split(path.sep).join('/');
+    return locks.includes(rel) ? { task: ws.task, path: rel } : null;
+  }
+  const hit = locks.find((p) => cmd.includes(p) || cmd.includes(path.basename(p)));
+  return hit ? { task: ws.task, path: hit } : null;
+}
+
 function commandPolicy(cmd) {
   for (const seg of cmd.split(/&&|\|\||;|\||\n|`|\$\(/)) {
     const d = judge(seg);
@@ -307,6 +324,11 @@ function main() {
         (tool === 'run_command' && ((RECORD_RE.test(rest) && WRITE_CMD_RE.test(rest)) || /\bupdate-ref\b|refs\/firstmate\//.test(rest)))) {
       decision = { decision: 'deny', reason: '[guard] Gate results, notes, facts, settings and task refs are written only by fm.js. Run fm.js save and fm.js gate; do not edit .firstmate/notes, facts.md, config.json or refs/firstmate by hand.' };
     }
+  }
+  // Locked acceptance tests: the crew changes the code, never the test that judges it.
+  if (/^(worker|checker|builder)$/.test(agent) && decision.decision === 'allow') {
+    const lockedHit = lockedTarget(tool, args, target, cmd);
+    if (lockedHit) decision = { decision: 'deny', reason: `[guard] ${lockedHit.path} is a locked acceptance test for task ${lockedHit.task}: change the code, not the test.` };
   }
   if (WRITE_TOOLS.has(tool)) {
     // A write changes the file, so re-reading it is legitimate again.

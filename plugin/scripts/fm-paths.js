@@ -27,7 +27,7 @@ function taskDir(repo, task) {
 
 const notesDir = (repo) => path.join(repo, '.firstmate', 'notes');
 
-// The task workspace that contains dir, as { repo, task }, or null when dir is not inside one. A workspace is
+// The task workspace that contains dir, as { repo, task, root }, or null when dir is not inside one. A workspace is
 // a git worktree: its .git is a file pointing at <repo>/.git/worktrees/<name>.
 function repoOfWorkspace(dir) {
   let d = path.resolve(String(dir || ''));
@@ -41,7 +41,7 @@ function repoOfWorkspace(dir) {
       if (!m) return null;
       const gitdir = path.resolve(d, m[1].trim());
       const common = path.dirname(path.dirname(gitdir)); // <repo>/.git
-      return { repo: path.dirname(common), task: path.basename(d) };
+      return { repo: path.dirname(common), task: path.basename(d), root: d };
     }
     const up = path.dirname(d);
     if (up === d) return null;
