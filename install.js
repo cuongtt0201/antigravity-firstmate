@@ -108,9 +108,9 @@ function install() {
 
   const version = JSON.parse(fs.readFileSync(path.join(SOURCE, 'plugin.json'), 'utf8')).version;
   log(`installed ${NAME} v${version} -> ${TARGET}`);
-  log('next: restart the Antigravity App, then RE-SELECT the firstmate agent in the agent picker');
-  log('      (pick another agent, then firstmate again). The App keeps a snapshot of the selected');
-  log("      agent's prompt and tools, so new chats keep using the old version until you re-select it.");
+  log('next: restart Antigravity (IDE or App). In the IDE, type /firstmate in a chat; in the App, RE-SELECT the');
+  log('      firstmate agent (pick another agent, then firstmate again): the App keeps a snapshot of the selected');
+  log("      agent's prompt until you re-select it. The crew runs through agy (check: node install.js --check).");
 }
 
 // What the plugin needs, checked without changing anything. Exit code 1 when something required is missing.
@@ -136,6 +136,15 @@ function check() {
   for (const [cmd, args] of [['helm', ['version', '--short']], ['terraform', ['version']], ['terragrunt', ['--version']], ['hadolint', ['--version']], [win ? 'python' : 'python3', ['--version']]]) {
     const v = run(cmd, args); add(v ? 'OK' : 'OPTIONAL', cmd, v || 'not found; its checks are skipped');
   }
+  const agyAt = require('./plugin/scripts/fm-crew.js').agyPath();
+  const agy = run(agyAt, ['--version']) || (fs.existsSync(agyAt) ? 'present' : null);
+  add(agy ? 'OK' : 'MISSING', 'agy (Antigravity CLI)', agy ? `${agyAt} ${agy}` : 'fm.js crew runs the crew with it; install the Antigravity CLI (it puts agy in ~/.gemini/bin)');
+  const wt = require('./plugin/scripts/fm-paths.js').wtRoot();
+  let wtOk = false; let probe = wt;
+  while (!fs.existsSync(probe) && path.dirname(probe) !== probe) probe = path.dirname(probe); // the check creates nothing
+  try { fs.accessSync(probe, fs.constants.W_OK); wtOk = true; } catch {}
+  add(wtOk ? 'OK' : 'MISSING', 'task workspaces', `${wt}${wtOk ? '' : ' is not writable; set FM_WT_ROOT'}`);
+  for (const app of ['/Applications/Antigravity IDE.app', '/Applications/Antigravity.app']) if (process.platform === 'darwin' && fs.existsSync(app)) add('NOTE', path.basename(app, '.app'), app);
   if (win) add('NOTE', 'terminal shell', `ComSpec=${process.env.ComSpec || '?'}; PowerShell ${run('powershell', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()']) || 'not found'}`);
   add(fs.existsSync(CONFIG_DIR) ? 'OK' : 'MISSING', 'Antigravity config folder', CONFIG_DIR);
   let installed = 'not installed';

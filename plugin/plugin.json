@@ -1,8 +1,8 @@
 {
   "name": "flash-ultra",
   "displayName": "Firstmate Crew",
-  "version": "0.12.0",
-  "description": "Argon routes each request to a playbook (quick, how, investigate, change) and judges; Flash explorers read with file:line evidence, Flash workers edit in the model's own task workspaces, a Flash checker verifies, and code gates every change before it reaches you as uncommitted edits. Blocks agents from applying, deleting or pushing.",
+  "version": "1.0.0-alpha.1",
+  "description": "A first mate on a cheap model runs a Flash crew in parallel (fm.js crew, one workspace per task), code gates every change, a strong judge reviews only what the risk calls for, and what passes is merged with an undo; high risk waits for you. Works in the Antigravity IDE, the App and the CLI. Blocks pushes, publishing, secrets and live-system changes.",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
     "Pod api-gateway trên prod cứ restart, check giúp nguyên nhân",
