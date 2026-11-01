@@ -1,0 +1,21 @@
+#!/usr/bin/env node
+// A stand-in for `agy -p ... --output-format json` in tests: no model, no tokens.
+// Markers in the prompt: WRITE_FILE:<name> writes that file in the working folder; SLEEP:<ms> waits first.
+// The response reports the role (FM_ROLE), model and folder it saw, and a verdict when the prompt is a judge's.
+const fs = require('fs');
+const a = process.argv.slice(2);
+const val = (k) => { const i = a.indexOf(k); return i >= 0 ? a[i + 1] : ''; };
+const prompt = val('-p') || val('--print');
+const model = val('--model');
+const sleep = Number((prompt.match(/SLEEP:(\d+)/) || [])[1] || 0);
+const finish = () => {
+  const m = prompt.match(/WRITE_FILE:([\w.-]+)/);
+  if (m) fs.writeFileSync(m[1], 'written by fake agy\n');
+  if (process.env.FAKE_AGY_LOG) fs.appendFileSync(process.env.FAKE_AGY_LOG, `${Date.now()} ${process.env.FM_ROLE || '-'} ${model}\n`);
+  const judge = /VERDICT:/.test(prompt) && process.env.FM_ROLE === 'judge';
+  const response = [`ROLE=${process.env.FM_ROLE || ''} TASK=${process.env.FM_TASK || ''} MODEL=${model} CWD=${process.cwd()}`,
+    judge ? (prompt.includes('PLEASE_REVISE') ? 'VERDICT: REVISE\nRISK: high\n- fix x' : 'VERDICT: APPROVE\n- fine') : 'STATUS: PASS'].join('\n');
+  if (process.env.FAKE_AGY_FAIL) { process.stdout.write(JSON.stringify({ status: 'ERROR', response: 'model unavailable' })); process.exit(1); }
+  process.stdout.write(JSON.stringify({ conversation_id: `fake-${process.pid}`, status: 'SUCCESS', response, duration_seconds: sleep / 1000, num_turns: 1, usage: { input_tokens: 15000, output_tokens: 20, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 15020 } }));
+};
+setTimeout(finish, sleep);

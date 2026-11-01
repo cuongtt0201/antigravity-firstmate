@@ -20,6 +20,9 @@
 //   fm.js clean   <repo> --legacy [--yes] [--force]  list (and remove) worker branches left by v0.7 and Antigravity worktrees
 //   fm.js sweep   <repo> [--hours N] [--yes]  list (and remove) tasks idle for N hours (24) or whose workspace is gone
 //   fm.js shape   <brief.md> [--sections] [file]  word counts of a /best brief's deliverables and drafts vs their limits
+//   fm.js crew    <repo> <task> --role builder|reader|judge [--model ..] [--check "<cmd>"] [--brief ".." | --brief-file f]
+//   fm.js crew    <repo> --batch <file.json>  run the crew as headless agy processes, in parallel (see fm-crew.js);
+//                                             after each builder, fm.js saves and gates its workspace itself
 //   fm.js usage   <conversation-id> [--brain <dir>]...  tokens per chat and subagent, and the strong model's share
 // Tasks live in refs/firstmate/<task>/{base,head}, never in refs/heads, so `git branch` and pushes never see them.
 // Node only (no bash, no ruby), so the same script runs on macOS, Linux and Windows.
@@ -695,12 +698,47 @@ function usageCmd(id, args) {
   out(formatUsage(res));
 }
 
+// ---------- crew: headless agy processes, one per task ----------
+async function crewCmd(repoArg, rest) {
+  const r = needRepo(repoArg);
+  const { crew, format, CrewError } = require('./fm-crew.js');
+  let specs;
+  const bi = rest.indexOf('--batch');
+  if (bi >= 0) {
+    try { specs = JSON.parse(fs.readFileSync(path.resolve(rest[bi + 1] || ''), 'utf8')); } catch (e) { die(`cannot read the batch file: ${e.message}`); }
+    if (!Array.isArray(specs) || !specs.length) die('the batch file must hold a non-empty JSON array of { task, role, brief }');
+  } else {
+    const spec = { task: rest[0] };
+    for (let i = 1; i < rest.length; i++) {
+      const k = rest[i]; const v = rest[i + 1];
+      if (k === '--role') { spec.role = v; i++; } else if (k === '--model') { spec.model = v; i++; } else if (k === '--skills') { spec.skills = v; i++; }
+      else if (k === '--brief') { spec.brief = v; i++; } else if (k === '--brief-file') { spec.briefFile = v; i++; } else if (k === '--as') { spec.as = v; i++; }
+      else if (k === '--check') { spec.check = v; i++; }
+    }
+    specs = [spec];
+  }
+  let results;
+  try { results = await crew(r, specs); } catch (e) { if (e instanceof CrewError) die(e.message); throw e; }
+  let failed = results.some((x) => !x.ok);
+  for (const res of results) {
+    out(format(res));
+    if (!res.ok || res.m.role !== 'builder') continue;
+    // the builder only edits; recording and checking its work is code, not something it may skip
+    try {
+      save(r, res.m.task, `crew: ${String(res.m.as || res.m.brief || res.m.task).split('\n')[0].slice(0, 60)}`);
+      gate(r, res.m.task, res.m.check || '');
+    } catch (e) { if (e instanceof Exit) failed = true; else throw e; }
+  }
+  if (failed) throw new Exit(1);
+}
+
 function main(argv) {
   if (argv.length < 2) die('usage: fm.js <init|fact|start|save|gate|review|deliver|status|clean> <repo> [args] | fm.js shape <brief.md> [--sections] [file] | fm.js usage <conversation-id>');
   const [cmd, arg, ...rest] = argv;
   switch (cmd) {
     case 'shape': return shape(arg, rest);
     case 'usage': return usageCmd(arg, rest);
+    case 'crew': return crewCmd(arg, rest);
     case 'init': return init(arg, rest[0]);
     case 'fact': return fact(arg, rest);
     case 'start': return start(arg, rest[0]);
@@ -732,8 +770,9 @@ function main(argv) {
   }
 }
 
-try { main(process.argv.slice(2)); }
-catch (e) {
+function fail(e) {
   if (e instanceof Exit) process.exitCode = e.code;
   else { process.stderr.write(`[fm] ERROR: ${e.message}\n`); process.exitCode = 2; }
 }
+try { const res = main(process.argv.slice(2)); if (res && typeof res.then === 'function') res.catch(fail); }
+catch (e) { fail(e); }

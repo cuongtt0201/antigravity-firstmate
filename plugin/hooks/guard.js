@@ -244,7 +244,9 @@ function main() {
 
   const target = pick(args, ['Path', 'AbsolutePath', 'TargetFile', 'filePath', 'path', 'DirectoryPath', 'SearchPath']);
 
-  const agent = decision.decision === 'allow' ? agentOf(convoId, st, ev.modelName || p.modelName, ev) : '';
+  // A crew member started by fm.js crew carries its role in the environment; that wins over any lookup.
+  const ENV_ROLE = { reader: 'explorer', judge: 'explorer', builder: 'worker' }[process.env.FM_ROLE] || '';
+  const agent = decision.decision === 'allow' ? (ENV_ROLE || agentOf(convoId, st, ev.modelName || p.modelName, ev)) : '';
 
   // First-mate budget. Its facts, notes, the plugin's playbooks and fm.js are free; every other read
   // and every other command segment counts (so chaining a free command does not hide a read).
