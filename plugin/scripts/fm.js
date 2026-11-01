@@ -9,6 +9,7 @@
 //   fm.js review  <repo> <task> [--full]     diff, uses of the changed names, related unchanged files, checklist
 //   fm.js deliver <repo> <task> [--keep]     apply the task diff to the captain's checkout, uncommitted
 //   fm.js path    <repo> <task>              the task's workspace folder
+//   fm.js risk    <repo> <task>              low | medium | high, from the files and size of the change
 //   fm.js config  <repo> [key [value]]       print the settings (defaults < ~/.firstmate/config.json < repo), one key, or set one
 //   fm.js status  <repo>
 //   fm.js clean   <repo> <task|--all>
@@ -330,6 +331,24 @@ function deliverLocked(r, t, keep) {
   if (!clean) throw new Exit(1);
 }
 
+// ---------- risk ----------
+// The level from the change itself, raised (never lowered) by a judge's floor in <task>.riskfloor.
+function taskRisk(r, t) {
+  const { classify, maxRisk } = require('./fm-risk.js');
+  const B = `refs/firstmate/${t}/base`; const H = `refs/firstmate/${t}/head`;
+  if (!git(r, ['rev-parse', '-q', '--verify', H]).ok) die(`no task '${t}'`);
+  const files = lines(gitOut(r, ['diff', '--name-status', '--no-renames', B, H])).map((l) => { const [st, ...p] = l.split('\t'); return { status: st[0], path: p.join('\t') }; });
+  let changed = 0;
+  for (const l of lines(gitOut(r, ['diff', '--numstat', B, H]))) { const [a, d] = l.split('\t'); changed += (Number(a) || 0) + (Number(d) || 0); }
+  const res = classify({ files, changedLines: changed });
+  let floor = '';
+  try { floor = fs.readFileSync(path.join(notesDir(r), `${t}.riskfloor`), 'utf8').trim(); } catch {}
+  if (floor && maxRisk(floor, res.level) !== res.level) { res.level = floor; res.reasons.unshift(`raised to ${floor} by the judge`); }
+  fs.mkdirSync(notesDir(r), { recursive: true });
+  fs.writeFileSync(path.join(notesDir(r), `${t}.risk`), `${res.level}\n`);
+  return res;
+}
+
 const taskNames = (r, re) => [...new Set(lines(gitOut(r, ['for-each-ref', '--format=%(refname)', 'refs/firstmate/'])).map((x) => (x.match(re) || [])[1]).filter(Boolean))];
 
 function status(repoArg) {
@@ -555,6 +574,7 @@ function main(argv) {
     case 'status': return status(arg);
     case 'clean': return clean(arg, rest);
     case 'sweep': return sweep(arg, rest);
+    case 'risk': { const r = needRepo(arg); taskName(rest[0]); const res = taskRisk(r, rest[0]); return out([`RISK: ${res.level}`, ...res.reasons.map((x) => `- ${x}`)].join('\n')); }
     case 'config': {
       const r = needRepo(arg);
       if (rest.length >= 2) { setRepoConfig(r, rest[0], rest.slice(1).join(' ')); return out(show(getKey(loadConfig(r), rest[0]))); }
