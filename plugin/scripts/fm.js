@@ -766,7 +766,12 @@ async function judgeCmd(repoArg, t, rest) {
   const text = dossier(r, t);
   const { crew, format, CrewError } = require('./fm-crew.js');
   let res;
-  try { [res] = await crew(r, [{ task: t, role: 'judge', model: mi >= 0 ? rest[mi + 1] : undefined, brief: `Judge this task and answer in your verdict format.\n\n${text}` }]); }
+  const rescue = rest.includes('--rescue');
+  if (rescue) fs.writeFileSync(path.join(notesDir(r), `${t}.rescued`), `${new Date().toISOString()}\n`);
+  const ask = rescue
+    ? 'RESCUE: the gate keeps failing for this task, also after several approaches. Diagnose the cause from the GATE lines and the diff, answer VERDICT: REVISE (or HUMAN when the task cannot be done as asked) and give a new approach as numbered FIXES.'
+    : 'Judge this task and answer in your verdict format.';
+  try { [res] = await crew(r, [{ task: t, role: 'judge', model: mi >= 0 ? rest[mi + 1] : undefined, brief: `${ask}\n\n${text}` }]); }
   catch (e) { if (e instanceof CrewError) die(e.message); throw e; }
   out(format(res));
   if (!res.ok) throw new Exit(1);

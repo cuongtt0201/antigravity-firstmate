@@ -5,8 +5,9 @@ spend a 14
 check "read 15 still allowed (6 is a reminder, 15 the hard stop)" allow "$(guard fm view_file '{"AbsolutePath":"/x/f15.ts"}')"
 check "read 16 over the hard stop" deny "$(guard fm view_file '{"AbsolutePath":"/x/f16.ts"}')"
 check "facts.md is free" allow "$(guard fm view_file '{"AbsolutePath":"/r/.firstmate/facts.md"}')"
-RULES=$(printf '{"conversationId":"fm","invocationNum":1,"initialNumSteps":9}' | node "$INJECT" invoke 2>/dev/null)
-check "over 6, the rules tell the first mate to delegate" 1 "$(grep -c 'send further reading to explorers' <<< "$RULES")"
+RULES=$(printf '{"conversationId":"fm","invocationNum":1,"initialNumSteps":9,"modelName":"gemini-4-argon-medium"}' | node "$INJECT" invoke 2>/dev/null)
+check "over 6, the rules tell a first mate on a strong model to delegate" 1 "$(grep -c 'send further reading to readers' <<< "$RULES")"
+check "a first mate on Flash has no read budget" 0 "$(printf '{"conversationId":"fm","invocationNum":1,"modelName":"gemini-3.8-flash-medium"}' | node "$INJECT" invoke 2>/dev/null | grep -c 'direct reads')"
 invoke fm 2 12
 check "later invocations of the same message do not reset" deny "$(guard fm view_file '{"AbsolutePath":"/x/f17.ts"}')"
 invoke fm 0 20
@@ -50,5 +51,5 @@ check "a first mate the captain runs on Flash is found by name" 1 "$(printf '{"c
 mkdir -p "$T/home/.gemini/antigravity-cli/brain/clichat"
 node -e "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[1]);d.exec('create table conversation_summaries(conversation_id text, agent_name text, step_count integer)');d.exec(\"insert into conversation_summaries values('clichat','explorer',50)\")" "$T/home/.gemini/antigravity-cli/conversation_summaries.db" 2>/dev/null
 CLI=$(printf '{"conversationId":"clichat","invocationNum":0,"modelName":"gemini-3.8-flash","artifactDirectoryPath":"%s"}' "$T/home/.gemini/antigravity-cli/brain/clichat" | env -u FM_CONVO_DB HOME="$T/home" USERPROFILE="$T/home" node "$INJECT" invoke 2>/dev/null)
-check "the index next to the chat's artifact folder is read (CLI chats)" 1 "$(grep -c 'explorer rules' <<< "$CLI")"
+check "the index next to the chat's artifact folder is read (CLI chats)" 1 "$(grep -c 'reader rules' <<< "$CLI")"
 check "worker has no budget" allow "$(for i in $(seq 1 8); do guard wk view_file "{\"AbsolutePath\":\"/x/w$i.ts\"}"; done | tail -c 5)"

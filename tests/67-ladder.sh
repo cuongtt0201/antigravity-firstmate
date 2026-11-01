@@ -19,5 +19,10 @@ check "arena-status lists gate per variant" "1 1" "$(grep -c 'ar--a .*gate PASS'
 fm arena-pick "$C" ar a >/dev/null
 check "arena-pick keeps one task with the picked change" "1 0 0" "$(fm status "$C" | grep -cE '^  ar ') $(fm status "$C" | grep -cE '^  ar--') $([ -d "$(fm path "$C" ar--b)" ] && echo 1 || echo 0)"
 check "arena-pick carries the picked change and request" "one hard edge case" "$(cat "$(fm path "$C" ar)/x.md") $(cat "$C/.firstmate/notes/ar.request")"
+fm start "$C" rs >/dev/null; RW2=$(fm path "$C" rs); echo '{' > "$RW2/r.json"; fm save "$C" rs x >/dev/null; for i in 1 2 3; do fm gate "$C" rs >/dev/null 2>&1; done
+fm arena "$C" rs --n 2 >/dev/null; for v in a b; do fm clean "$C" "rs--$v" >/dev/null; done
+check "ladder: arena tried, still failing → judge rescue" "NEXT: judge rescue" "$(fm ladder "$C" rs | head -1)"
+fm judge "$C" rs --rescue >/dev/null 2>&1
+check "ladder: rescue tried → ask captain" "NEXT: ask captain" "$(fm ladder "$C" rs | head -1)"
 fm clean "$C" l1 >/dev/null; fm start "$C" l1 >/dev/null
 check "a task started again under an old name starts with a clean record" "NEXT: build" "$(fm ladder "$C" l1 | head -1)"

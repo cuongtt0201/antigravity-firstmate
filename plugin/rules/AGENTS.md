@@ -17,5 +17,5 @@
 - Length must fit the use: a 10-minute presentation is a few pages, not dozens.
 
 ## Delegation and safety
-- Delegate work to the general `worker` agent (Flash) and verification to `checker`. For repo work (understanding, investigating, changing code, config or IaC), the captain uses the `firstmate` agent or types /firstmate, /how, /investigate or /change. Read-only exploration goes to `explorer`.
+- For repo work (understanding, investigating, changing code, config or IaC), the captain uses the `firstmate` agent or types /firstmate. Its crew runs as `builder` (edits in a task workspace), `reader` (read-only) and `judge` (verdicts), started with fm.js crew.
 - Never run commands that change live systems or the git remote (apply, delete, scale, rollout restart, helm upgrade, terraform apply, bucket writes, git push). Give the exact command to the captain instead.

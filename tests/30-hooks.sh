@@ -12,7 +12,9 @@ check "several facts in one call, duplicates skipped" 3 "$(grep -c '^- ' "$T/my 
 SESSION=$(printf '{"conversationId":"fm","workspacePaths":["file://%s%s"]}' "${WIN:+/}" "$(sed 's/ /%20/g' <<< "$T/my repo")" | node "$INJECT" session 2>/dev/null)
 check "facts injected for a percent-encoded path" 1 "$(grep -c 'Uses Fastify 5' <<< "$SESSION")"
 RULES=$(printf '{"conversationId":"ex","invocationNum":0,"initialNumSteps":1}' | node "$INJECT" invoke 2>/dev/null)
-check "explorer gets its rules" 1 "$(grep -c 'explorer rules' <<< "$RULES")"
+check "explorer gets the reader rules" 1 "$(grep -c 'reader rules' <<< "$RULES")"
+check "a crew process gets no facts" '{}' "$(printf '{"conversationId":"fm","workspacePaths":["file:///x"]}' | FM_ROLE=builder node "$INJECT" session 2>/dev/null)"
+check "a crew process gets no injected rules" '{}' "$(printf '{"conversationId":"wk","invocationNum":0}' | FM_ROLE=builder node "$INJECT" invoke 2>/dev/null)"
 check "default agent gets nothing" '{}' "$(printf '{"conversationId":"plain","invocationNum":0}' | node "$INJECT" invoke 2>/dev/null)"
 mkdir -p "$T/no repo"
 SESSION=$(printf '{"conversationId":"fm","workspacePaths":["file://%s%s"]}' "${WIN:+/}" "$(sed 's/ /%20/g' <<< "$T/no repo")" | node "$INJECT" session 2>/dev/null)
