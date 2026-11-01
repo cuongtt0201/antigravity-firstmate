@@ -19,7 +19,7 @@ check "links are never saved" 0 "$(git -C "$W" show --name-only --format= HEAD |
 check "gate passes (yaml anchors, helm, no-values release)" 0 "$(fm gate "$R" t1 >/dev/null 2>&1; echo $?)"
 fm gate "$R" t1 'test -f svc/node_modules/pkg/index.js && grep -q SECRET .env && echo junk > cache.txt' >/dev/null 2>&1
 check "gate with deps passes and leaves no junk" "" "$(git -C "$W" status --porcelain)"
-fm deliver "$R" t1 >/dev/null 2>&1
+fm deliver "$R" t1 --approve >/dev/null 2>&1
 check "delivered uncommitted, spaces ok" 3 "$(git -C "$R" status --porcelain | wc -l | tr -d ' ')"
 check "delivery logged in notes" 1 "$(grep -c 'delivered task t1 to ft/x, uncommitted:' "$R/.firstmate/notes/log.md")"
 check "branches untouched" "ft/x main" "$(git -C "$R" branch --format='%(refname:short)' | sort | tr '\n' ' ' | sed 's/ $//')"

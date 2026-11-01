@@ -7,7 +7,9 @@
 //   fm.js save    <repo> <task> "<message>"  commit the task's changes inside the task
 //   fm.js gate    <repo> <task> [command]    run checks (auto-detected, or the given command)
 //   fm.js review  <repo> <task> [--full]     diff, uses of the changed names, related unchanged files, checklist
-//   fm.js deliver <repo> <task> [--keep]     apply the task diff to the captain's checkout, uncommitted
+//   fm.js deliver <repo> <task> [--keep] [--approve] [--mode propose|apply|commit] [--message "<subject>"]
+//                                             merge the task by the repo's mode; high risk waits for --approve (exit 3)
+//   fm.js undo    <repo> <task>              revert the task's commit, or reverse its uncommitted patch
 //   fm.js path    <repo> <task>              the task's workspace folder
 //   fm.js risk    <repo> <task>              low | medium | high, from the files and size of the change
 //   fm.js config  <repo> [key [value]]       print the settings (defaults < ~/.firstmate/config.json < repo), one key, or set one
@@ -237,7 +239,11 @@ function save(repoArg, t, msg) {
   if (!fs.existsSync(w)) die(`no workspace for task '${t}'`);
   git(w, ['add', '-A']);
   if (git(w, ['diff', '--cached', '--quiet']).ok) out('[fm] no new changes to save');
-  else git(w, [...ID, 'commit', '-q', '-m', msg || `firstmate: ${t}`]);
+  else {
+    // the task's own history: the repo's commit hooks (husky, lint-staged) are for the captain's commits, not these
+    const c = git(w, [...ID, 'commit', '-q', '--no-verify', '-m', msg || `firstmate: ${t}`]);
+    if (!c.ok) die(`could not record the task's changes: ${(c.err || c.out).split('\n')[0]}`);
+  }
   git(r, ['update-ref', `refs/firstmate/${t}/head`, gitOut(w, ['rev-parse', 'HEAD'])]);
   out(`[fm] task ${t} saved: ${gitOut(r, ['diff', '--shortstat', `refs/firstmate/${t}/base`, `refs/firstmate/${t}/head`]).trim()}`);
   const stat = lines(gitOut(r, ['diff', '--stat=100', `refs/firstmate/${t}/base`, `refs/firstmate/${t}/head`]));
@@ -276,59 +282,137 @@ function gate(repoArg, t, cmd) {
   if (!pass) throw new Exit(1);
 }
 
-function deliver(repoArg, t, keep) {
+function deliver(repoArg, t, args) {
   const r = needRepo(repoArg); taskName(t);
-  return withLock(r, () => deliverLocked(r, t, keep));
+  return withLock(r, () => deliverLocked(r, t, args || []));
 }
-function deliverLocked(r, t, keep) {
+
+const LEDGER_HEAD = 'time\ttask\tmode\trisk\tgate\tverdict\tfiles\tsha\tundone';
+const ledgerFile = (r) => path.join(notesDir(r), 'ledger.tsv');
+function readLedger(r) {
+  try { return fs.readFileSync(ledgerFile(r), 'utf8').split('\n').filter(Boolean).slice(1).map((l) => l.split('\t')); } catch { return []; }
+}
+function writeLedger(r, rows) {
+  fs.mkdirSync(notesDir(r), { recursive: true });
+  fs.writeFileSync(ledgerFile(r), `${[LEDGER_HEAD, ...rows.map((x) => x.join('\t'))].join('\n')}\n`);
+}
+const globRe2 = (g) => new RegExp(`^${g.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`);
+
+function deliverLocked(r, t, args) {
+  const opt = { keep: args.includes('--keep'), approve: args.includes('--approve'), mode: '', message: '' };
+  for (let i = 0; i < args.length; i++) { if (args[i] === '--mode') opt.mode = args[++i] || ''; else if (args[i] === '--message') opt.message = args[++i] || ''; }
   const B = `refs/firstmate/${t}/base`; const H = `refs/firstmate/${t}/head`;
   if (!git(r, ['rev-parse', '-q', '--verify', H]).ok) die(`no task '${t}'`);
   const w = taskDir(r, t);
   if (fs.existsSync(w) && gitOut(w, ['status', '--porcelain'])) die(`task '${t}' has unsaved changes; save and gate first`);
-  const note = path.join(r, '.firstmate', 'notes', `${t}.gate`);
+  const note = path.join(notesDir(r), `${t}.gate`);
   let gsha; let gv;
   try { [gsha, gv] = fs.readFileSync(note, 'utf8').trim().split(/\s+/); } catch { die(`task '${t}' has no gate result; run: fm.js gate ${r} ${t}`); }
   if (gsha !== gitOut(r, ['rev-parse', H])) die(`task '${t}' changed after its gate; run the gate again`);
   if (gv !== 'PASS') die(`task '${t}' gate is ${gv}; fix it first`);
   const files = lines(gitOut(r, ['diff', '--name-only', B, H]));
   if (!files.length) die(`task '${t}' has no changes to deliver`);
+
+  const cfg = loadConfig(r);
+  const { ORDER } = require('./fm-risk.js');
+  let mode = opt.mode || cfg.merge;
+  if (!['propose', 'apply', 'commit'].includes(mode)) die(`unknown merge mode '${mode}' (propose, apply or commit)`);
+  const risk = taskRisk(r, t);
+  const maxAuto = ORDER.includes(cfg.autoMergeMaxRisk) ? cfg.autoMergeMaxRisk : 'medium';
+  if (!opt.approve && mode !== 'propose' && (risk.level === 'high' || ORDER.indexOf(risk.level) > ORDER.indexOf(maxAuto))) {
+    out(`[fm] risk ${risk.level} is above what merges without the captain (${risk.level === 'high' ? 'high always waits' : `autoMergeMaxRisk ${maxAuto}`}):`);
+    mode = 'propose';
+  }
+  if (mode === 'propose') {
+    out(`[fm] PROPOSED task ${t} (risk ${risk.level}): waiting for the captain. Deliver it with: fm.js deliver ${r} ${t} --approve`);
+    out(risk.reasons.map((x) => `- ${x}`).join('\n'));
+    out(gitOut(r, ['diff', '--stat=100', B, H]));
+    throw new Exit(3);
+  }
+
   const busy = files.filter((f) => gitOut(r, ['status', '--porcelain', '--', f]));
   if (busy.length) die(`you have uncommitted edits in: ${busy.map((f) => `'${f}'`).join(' ')}. Commit or stash them, then deliver again.`);
-  const patch = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'fm-')), 'task.patch');
+  const keepPatch = path.join(notesDir(r), `${t}.patch`);
   const diff = spawnSync('git', ['diff', '--binary', B, H], { cwd: r, maxBuffer: 256 * 1024 * 1024 });
-  fs.writeFileSync(patch, diff.stdout);
+  fs.mkdirSync(notesDir(r), { recursive: true });
+  fs.writeFileSync(keepPatch, diff.stdout);
   let clean = true;
-  try {
-    if (git(r, ['apply', '--check', patch]).ok) {
-      git(r, ['apply', patch]);
-    } else {
-      out('[fm] your branch moved since the task started; applying with a 3-way merge');
-      const three = git(r, ['apply', '--3way', patch]);
-      for (const f of files) git(r, ['reset', '-q', '--', f]);
-      const conflict = files.filter((f) => { try { return /^<{7} /m.test(fs.readFileSync(path.join(r, f), 'utf8')); } catch { return false; } });
-      if (conflict.length) {
-        clean = false;
-        out(`[fm] CONFLICT markers left in: ${conflict.map((f) => `'${f}'`).join(' ')}. Resolve them by hand; the task is kept (fm.js clean ${r} ${t} when done).`);
-      } else if (!three.ok) {
-        die('the task could not be applied to your branch (git apply --3way failed); nothing was changed and the task is kept');
-      }
+  if (git(r, ['apply', '--check', keepPatch]).ok) {
+    git(r, ['apply', keepPatch]);
+  } else {
+    out('[fm] your branch moved since the task started; applying with a 3-way merge');
+    const three = git(r, ['apply', '--3way', keepPatch]);
+    for (const f of files) git(r, ['reset', '-q', '--', f]);
+    const conflict = files.filter((f) => { try { return /^<{7} /m.test(fs.readFileSync(path.join(r, f), 'utf8')); } catch { return false; } });
+    if (conflict.length) {
+      clean = false;
+      out(`[fm] CONFLICT markers left in: ${conflict.map((f) => `'${f}'`).join(' ')}. Resolve them by hand; the task is kept (fm.js clean ${r} ${t} when done).`);
+    } else if (!three.ok) {
+      fs.rmSync(keepPatch, { force: true });
+      die('the task could not be applied to your branch (git apply --3way failed); nothing was changed and the task is kept');
     }
-  } finally { fs.rmSync(path.dirname(patch), { recursive: true, force: true }); }
+  }
+
   const branch = gitOut(r, ['rev-parse', '--abbrev-ref', 'HEAD']);
-  out(`[fm] delivered task ${t} to ${r} as UNCOMMITTED changes${clean ? '' : ' WITH CONFLICTS'} on branch ${branch}:`);
-  out(lines(gitOut(r, ['diff', '--stat=100', '--', ...files])).slice(-30).join('\n'));
-  out('[fm] review: git diff | then commit and push yourself');
-  fs.mkdirSync(path.join(r, '.firstmate', 'notes'), { recursive: true });
+  let done = 'apply'; let sha = '-';
+  if (mode === 'commit' && clean) {
+    if (cfg.protectedBranches.some((g) => globRe2(g).test(branch)) && !cfg.commitOnProtected) {
+      out(`[fm] ${branch} is protected: applied, not committed`);
+    } else {
+      git(r, ['add', '-A', '--', ...files]);
+      const cargs = ['commit', '-q', '-m', opt.message || `firstmate: ${t}`, '-m', `Firstmate-Task: ${t}\nFirstmate-Risk: ${risk.level}`, '--', ...files];
+      let c = git(r, cargs);
+      if (!c.ok && /tell me who you are|user\.email|user\.name|identity/i.test(c.err)) c = git(r, [...ID, ...cargs]);
+      if (c.ok) { done = 'commit'; sha = gitOut(r, ['rev-parse', 'HEAD']); }
+      else { git(r, ['reset', '-q', '--', ...files]); out(`[fm] commit failed (${(c.err || c.out).split('\n')[0] || 'no message'}); the change is applied, uncommitted`); }
+    }
+  }
+  if (done === 'commit') out(`[fm] delivered task ${t} to ${r} as commit ${sha.slice(0, 7)} on branch ${branch} (undo: fm.js undo ${r} ${t}):`);
+  else out(`[fm] delivered task ${t} to ${r} as UNCOMMITTED changes${clean ? '' : ' WITH CONFLICTS'} on branch ${branch}:`);
+  out(lines(gitOut(r, done === 'commit' ? ['show', '--stat=100', '--format=', sha] : ['diff', '--stat=100', '--', ...files])).slice(-30).join('\n'));
+  if (done !== 'commit') out('[fm] review: git diff | then commit and push yourself');
   const stamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
-  fs.appendFileSync(path.join(r, '.firstmate', 'notes', 'log.md'), `- ${stamp} delivered task ${t} to ${branch}, uncommitted: ${files.join(' ')}${clean ? '' : ' (CONFLICTS)'}\n`);
-  out('[fm] logged in .firstmate/notes/log.md');
-  if (keep !== '--keep' && clean) {
+  fs.appendFileSync(path.join(notesDir(r), 'log.md'), `- ${stamp} delivered task ${t} to ${branch}, ${done === 'commit' ? `commit ${sha.slice(0, 7)}` : 'uncommitted'}: ${files.join(' ')}${clean ? '' : ' (CONFLICTS)'}\n`);
+  if (clean) {
+    const rows = readLedger(r);
+    rows.push([new Date().toISOString(), t, done, risk.level, 'PASS', '-', files.join(' '), sha, '']);
+    writeLedger(r, rows);
+  }
+  out('[fm] logged in .firstmate/notes/log.md and ledger.tsv');
+  if (!opt.keep && clean) {
     if (fs.existsSync(w)) git(r, ['worktree', 'remove', '--force', w]);
     git(r, ['update-ref', '-d', B]); git(r, ['update-ref', '-d', H]);
-    fs.rmSync(note, { force: true }); fs.rmSync(`${note}.log`, { force: true }); fs.rmSync(slotFile(r, t), { force: true });
+    for (const f of [note, `${note}.log`, slotFile(r, t)]) fs.rmSync(f, { force: true });
     out(`[fm] task ${t} removed`);
   }
   if (!clean) throw new Exit(1);
+}
+
+// Undo the last delivery of a task: revert its commit, or reverse its patch when nothing touched the files since.
+function undo(repoArg, t) {
+  const r = needRepo(repoArg); taskName(t);
+  withLock(r, () => {
+    const rows = readLedger(r);
+    let i = rows.length - 1;
+    while (i >= 0 && !(rows[i][1] === t && !rows[i][8])) i -= 1;
+    if (i < 0) die(`no delivery of task '${t}' to undo (see .firstmate/notes/ledger.tsv)`);
+    const [, , mode, , , , files, sha] = rows[i];
+    if (mode === 'commit') {
+      if (!git(r, ['merge-base', '--is-ancestor', sha, 'HEAD']).ok) die(`commit ${sha.slice(0, 7)} of task '${t}' is not on this branch`);
+      let rv = git(r, ['revert', '--no-edit', sha]);
+      if (!rv.ok && /tell me who you are|user\.email|identity/i.test(rv.err)) { git(r, ['revert', '--abort']); rv = git(r, [...ID, 'revert', '--no-edit', sha]); }
+      if (!rv.ok) { git(r, ['revert', '--abort']); die(`git revert of ${sha.slice(0, 7)} failed: ${rv.err.split('\n')[0]}`); }
+      out(`[fm] task ${t}: reverted commit ${sha.slice(0, 7)} with ${gitOut(r, ['rev-parse', '--short', 'HEAD'])}`);
+    } else {
+      const patch = path.join(notesDir(r), `${t}.patch`);
+      if (!fs.existsSync(patch)) die(`the patch of task '${t}' is gone; undo by hand`);
+      if (!git(r, ['apply', '-R', '--check', patch]).ok) die(`${files} changed since the delivery; undo by hand`);
+      git(r, ['apply', '-R', patch]);
+      out(`[fm] task ${t}: the uncommitted change is reversed`);
+    }
+    rows[i][8] = new Date().toISOString();
+    writeLedger(r, rows);
+  });
 }
 
 // ---------- risk ----------
@@ -570,7 +654,8 @@ function main(argv) {
     case 'save': return save(arg, rest[0], rest[1]);
     case 'gate': return gate(arg, rest[0], rest.slice(1).join(' '));
     case 'review': return review(arg, rest[0], rest[1]);
-    case 'deliver': return deliver(arg, rest[0], rest[1]);
+    case 'deliver': return deliver(arg, rest[0], rest.slice(1));
+    case 'undo': return undo(arg, rest[0]);
     case 'status': return status(arg);
     case 'clean': return clean(arg, rest);
     case 'sweep': return sweep(arg, rest);
