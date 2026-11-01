@@ -1,0 +1,19 @@
+diff --git a/slugify.js b/slugify.js
+index e4c7c3b..94eae3c 100644
+--- a/slugify.js
++++ b/slugify.js
+@@ -1,5 +1,12 @@
+-// Turn a title into a URL slug.
++// Turn a title into a URL slug. Accented letters (Vietnamese included) become plain ASCII.
+ function slugify(text) {
+-  return String(text).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
++  if (text == null) return '';
++  return String(text)
++    .replace(/[đĐ]/g, 'd')
++    .normalize('NFKD')
++    .replace(/\p{M}/gu, '')
++    .toLowerCase().trim()
++    .replace(/[^a-z0-9]+/g, '-')
++    .replace(/^-+|-+$/g, '');
+ }
+ module.exports = { slugify };

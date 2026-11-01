@@ -25,3 +25,6 @@ jobs:
       - name: tests
         shell: bash
         run: bash tests/run.sh
+      - name: benchmark self-test
+        shell: bash
+        run: bash bench/selftest.sh

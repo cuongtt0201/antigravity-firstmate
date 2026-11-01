@@ -1,0 +1,16 @@
+diff --git a/cli.js b/cli.js
+index eba9170..371d822 100644
+--- a/cli.js
++++ b/cli.js
+@@ -1,5 +1,8 @@
+ #!/usr/bin/env node
+-// Usage: node cli.js <title>...   prints one slug per title
++// Usage: node cli.js [--json] <title>...   prints one slug per title, or a JSON array of { title, slug }
+ const { slugify } = require('./slugify');
+-const titles = process.argv.slice(2);
+-for (const t of titles) console.log(slugify(t));
++const args = process.argv.slice(2);
++const json = args.includes('--json');
++const titles = args.filter((a) => a !== '--json');
++if (json) console.log(JSON.stringify(titles.map((title) => ({ title, slug: slugify(title) }))));
++else for (const t of titles) console.log(slugify(t));
