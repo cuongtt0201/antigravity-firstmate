@@ -846,7 +846,7 @@ function arenaPick(repoArg, t, letter) {
     if (!git(r, ['worktree', 'move', from, to]).ok) die(`could not move ${from} to ${to}`);
     for (const k of ['base', 'head']) git(r, ['update-ref', `refs/firstmate/${t}/${k}`, gitOut(r, ['rev-parse', `refs/firstmate/${v}/${k}`])]);
     for (const k of ['base', 'head']) git(r, ['update-ref', '-d', `refs/firstmate/${v}/${k}`]);
-    for (const ext of ['gate', 'gate.log', 'slot', 'attempts', 'locked', 'risk']) {
+    for (const ext of ['gate', 'gate.log', 'slot', 'attempts', 'locked', 'risk', 'verdict', 'riskfloor']) {
       const f = path.join(notesDir(r), `${v}.${ext}`);
       if (fs.existsSync(f)) fs.renameSync(f, path.join(notesDir(r), `${t}.${ext}`));
     }

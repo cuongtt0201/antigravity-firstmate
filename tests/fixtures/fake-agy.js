@@ -13,6 +13,7 @@ const finish = () => {
   if (m) fs.writeFileSync(m[1], 'written by fake agy\n');
   if (process.env.FAKE_AGY_LOG) fs.appendFileSync(process.env.FAKE_AGY_LOG, `${Date.now()} ${process.env.FM_ROLE || '-'} ${model}\n`);
   const judge = /VERDICT:/.test(prompt) && process.env.FM_ROLE === 'judge';
+  if (process.env.FAKE_AGY_ECHO) { process.stdout.write(JSON.stringify({ conversation_id: 'echo', status: 'SUCCESS', response: prompt, usage: {} })); return; }
   const response = [`ROLE=${process.env.FM_ROLE || ''} TASK=${process.env.FM_TASK || ''} MODEL=${model} CWD=${process.cwd()}`,
     judge ? (prompt.includes('PLEASE_REVISE') ? 'VERDICT: REVISE\nRISK: high\n- fix x' : 'VERDICT: APPROVE\n- fine') : 'STATUS: PASS'].join('\n');
   if (process.env.FAKE_AGY_FAIL) { process.stdout.write(JSON.stringify({ status: 'ERROR', response: 'model unavailable' })); process.exit(1); }

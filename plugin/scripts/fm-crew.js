@@ -56,6 +56,14 @@ function usedToday(r, capKey) {
   } catch { return 0; }
 }
 
+// A builder may only touch its workspace, so the repo's facts come inside its prompt, not as a path.
+function factsText(r) {
+  try {
+    const lines = fs.readFileSync(path.join(r, '.firstmate', 'facts.md'), 'utf8').split('\n').filter((l) => l.startsWith('- '));
+    return lines.slice(-60).join('\n') || 'none recorded yet';
+  } catch { return 'none recorded yet'; }
+}
+
 // Checks one member of the crew and fills in everything the run needs; throws CrewError when refused.
 function prepare(r, spec, cfg) {
   const { task, role } = spec;
@@ -75,7 +83,7 @@ function prepare(r, spec, cfg) {
     ROLES[role].inTask ? `WORKSPACE: ${ws}` : null,
     `MODEL: ${model.key}`,
     `SKILLS: ${skills}`,
-    `FACTS: ${path.join(r, '.firstmate', 'facts.md')}`,
+    ROLES[role].inTask ? `FACTS (known about this repo):\n${factsText(r)}` : `FACTS: ${path.join(r, '.firstmate', 'facts.md')}`,
   ].filter(Boolean).join('\n');
   return { ...spec, model, cwd: ROLES[role].inTask ? ws : r, prompt: `${rolePrompt(role)}\n---\n${header}\n\n${brief.trim()}\n` };
 }
@@ -148,7 +156,8 @@ async function crew(r, specs) {
 function format(res) {
   const { m, usage } = res;
   const head = `[fm] crew ${m.task} (${m.role}, ${m.model.id}): ${res.ok ? 'done' : 'FAILED'} in ${Math.round(res.ms / 1000)}s, tokens in ${usage.input_tokens || 0} (cached ${usage.cache_read_tokens || 0}) out ${usage.output_tokens || 0}; report ${res.file}`;
-  const body = res.ok ? String(res.json.response || '').trim().split('\n').slice(0, 80).join('\n') : `ERROR: ${res.error}`;
+  const said = res.ok ? String(res.json.response || '').trim() : '';
+  const body = res.ok ? (said ? said.split('\n').slice(0, 80).join('\n') : '(no report: the agent stopped without a final message; its transcript is conversation ' + (res.json.conversation_id || '?') + ')') : `ERROR: ${res.error}`;
   return `${head}\n${body}`;
 }
 

@@ -16,7 +16,9 @@ echo 'one' > "$(fm path "$C" ar--a)/x.md"; fm save "$C" ar--a x >/dev/null; fm g
 echo '{' > "$(fm path "$C" ar--b)/x.json"; fm save "$C" ar--b x >/dev/null; fm gate "$C" ar--b >/dev/null 2>&1
 AS=$(fm arena-status "$C" ar)
 check "arena-status lists gate per variant" "1 1" "$(grep -c 'ar--a .*gate PASS' <<< "$AS") $(grep -c 'ar--b .*gate FAIL' <<< "$AS")"
+fm verdict "$C" ar--a APPROVE "picked" >/dev/null
 fm arena-pick "$C" ar a >/dev/null
+check "arena-pick carries the verdict of the picked variant" APPROVE "$(head -1 "$C/.firstmate/notes/ar.verdict" 2>/dev/null | cut -d" " -f2)"
 check "arena-pick keeps one task with the picked change" "1 0 0" "$(fm status "$C" | grep -cE '^  ar ') $(fm status "$C" | grep -cE '^  ar--') $([ -d "$(fm path "$C" ar--b)" ] && echo 1 || echo 0)"
 check "arena-pick carries the picked change and request" "one hard edge case" "$(cat "$(fm path "$C" ar)/x.md") $(cat "$C/.firstmate/notes/ar.request")"
 fm start "$C" rs >/dev/null; RW2=$(fm path "$C" rs); echo '{' > "$RW2/r.json"; fm save "$C" rs x >/dev/null; for i in 1 2 3; do fm gate "$C" rs >/dev/null 2>&1; done

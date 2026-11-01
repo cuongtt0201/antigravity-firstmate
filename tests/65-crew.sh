@@ -5,6 +5,7 @@ fm init "$C" >/dev/null; fm start "$C" b1 >/dev/null; fm start "$C" b2 >/dev/nul
 CO=$(fm crew "$C" b1 --role builder --brief "WRITE_FILE:hello.txt say hi" 2>&1)
 check "crew: builder runs in the task workspace" 1 "$(grep -cE 'CWD=.*[/\\]b1$' <<< "$CO")"
 check "crew: the role and task reach the agent's hooks" 1 "$(grep -c 'ROLE=builder TASK=b1' <<< "$CO")"
+check "crew: a builder gets the facts inside its prompt" 1 "$(fm fact "$C" "Uses node 22" >/dev/null; FAKE_AGY_ECHO=1 fm crew "$C" b2 --role builder --brief "echo facts" 2>&1 | grep -c "^- Uses node 22")"
 check "crew: builder uses the standard model" 1 "$(grep -c 'MODEL=gemini-3.8-flash-medium' <<< "$CO")"
 check "crew: the builder's file is in its workspace" yes "$([ -f "$(fm path "$C" b1)/hello.txt" ] && echo yes)"
 check "crew: fm.js saves and gates the builder's work itself" "1 1" "$(grep -c '^\[fm\] gate b1: PASS' <<< "$CO") $(fm status "$C" | grep 'b1 |' | grep -c 'gate: PASS')"
