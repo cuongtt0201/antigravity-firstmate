@@ -9,6 +9,7 @@
 //   fm.js review  <repo> <task> [--full]     diff, uses of the changed names, related unchanged files, checklist
 //   fm.js deliver <repo> <task> [--keep]     apply the task diff to the captain's checkout, uncommitted
 //   fm.js path    <repo> <task>              the task's workspace folder
+//   fm.js config  <repo> [key [value]]       print the settings (defaults < ~/.firstmate/config.json < repo), one key, or set one
 //   fm.js status  <repo>
 //   fm.js clean   <repo> <task|--all>
 //   fm.js clean   <repo> --legacy [--yes] [--force]  list (and remove) worker branches left by v0.7 and Antigravity worktrees
@@ -24,10 +25,10 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { wtRoot, taskDir, notesDir } = require('./fm-paths.js');
 const { withLock } = require('./fm-lock.js');
+const { loadConfig, setRepoConfig, getKey, show } = require('./fm-config.js');
 
 const ID = ['-c', 'user.name=firstmate', '-c', 'user.email=firstmate@local'];
 const PROTECTED_RE = /^(main|master|prod|production|prod-.*|release\/.*)$/;
-const PORT_BASE = 3100;
 const DEP_NAMES = new Set(['node_modules', '.venv', 'venv', 'vendor', '.env', '.env.local', '.env.test', '.env.development', '.env.development.local', '.env.test.local']);
 
 // sandboxed agents may not read ~/.gitconfig; fall back to no global config
@@ -194,7 +195,8 @@ function allocSlot(r, t) {
 }
 function slotOf(r, t) { try { return Number(fs.readFileSync(slotFile(r, t), 'utf8').trim()) || 0; } catch { return 0; } }
 function touchSlot(r, t) { try { const now = new Date(); fs.utimesSync(slotFile(r, t), now, now); } catch {} }
-const slotEnv = (r, t) => ({ ...process.env, FIRSTMATE_SLOT: String(slotOf(r, t)), PORT: String(PORT_BASE + slotOf(r, t)) });
+const portBase = (r) => Number(loadConfig(r).portBase) || 3100;
+const slotEnv = (r, t) => ({ ...process.env, FIRSTMATE_SLOT: String(slotOf(r, t)), PORT: String(portBase(r) + slotOf(r, t)) });
 
 function start(repoArg, t) {
   const r = needRepo(repoArg); taskName(t);
@@ -223,7 +225,7 @@ function startLocked(r, t) {
     if (!excludeHas(ex, `/${p}`)) excludeAdd(ex, `/${p}\n`);
   }
   const slot = allocSlot(r, t);
-  out(`[fm] task ${t}: workspace ${w} (from ${gitOut(r, ['log', '-1', '--format=%h %s', base])}), slot ${slot} (PORT ${PORT_BASE + slot} in checks)`);
+  out(`[fm] task ${t}: workspace ${w} (from ${gitOut(r, ['log', '-1', '--format=%h %s', base])}), slot ${slot} (PORT ${portBase(r) + slot} in checks)`);
   if (linked) out(`[fm] linked ${linked} git-ignored dependency/env path(s) from your checkout (node_modules, .venv, .env...)`);
   if (gitOut(r, ['status', '--porcelain'])) out("[fm] note: the captain's uncommitted changes are NOT in this workspace");
 }
@@ -553,6 +555,11 @@ function main(argv) {
     case 'status': return status(arg);
     case 'clean': return clean(arg, rest);
     case 'sweep': return sweep(arg, rest);
+    case 'config': {
+      const r = needRepo(arg);
+      if (rest.length >= 2) { setRepoConfig(r, rest[0], rest.slice(1).join(' ')); return out(show(getKey(loadConfig(r), rest[0]))); }
+      return out(rest.length ? show(getKey(loadConfig(r), rest[0])) : JSON.stringify(loadConfig(r), null, 2));
+    }
     case 'path': { const r = needRepo(arg); taskName(rest[0]); return out(taskDir(r, rest[0])); }
     default: return die(`unknown command '${cmd}'`);
   }
