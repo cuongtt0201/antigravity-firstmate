@@ -26,6 +26,8 @@
 //   fm.js dossier <repo> <task>              what the judge reads: request, done-when, risk, locked tests, gate, review (≤ 30 KB)
 //   fm.js judge   <repo> <task> [--model strong|second]  System 2: one headless run on the strong model; records the verdict
 //   fm.js verdict <repo> <task> APPROVE|REVISE|REJECT|HUMAN "<reason>" [--risk medium|high]   record a verdict by hand
+//   fm.js ladder  <repo> <task>              the next step from the task's record: build, gate, fix, arena, judge, deliver, ask captain
+//   fm.js arena   <repo> <task> --n 3 [--request ".."]   variants <task>--a.. from one base; arena-status; arena-pick <task> <letter>
 //   fm.js usage   <conversation-id> [--brain <dir>]...  tokens per chat and subagent, and the strong model's share
 // Tasks live in refs/firstmate/<task>/{base,head}, never in refs/heads, so `git branch` and pushes never see them.
 // Node only (no bash, no ruby), so the same script runs on macOS, Linux and Windows.
@@ -215,13 +217,13 @@ function start(repoArg, t, args = []) {
   const ri = args.indexOf('--request');
   if (ri >= 0 && args[ri + 1]) fs.writeFileSync(path.join(notesDir(r), `${t}.request`), `${args[ri + 1].trim()}\n`);
 }
-function startLocked(r, t) {
+function startLocked(r, t, baseRef) {
   const w = taskDir(r, t);
   if (fs.existsSync(w) || git(r, ['rev-parse', '-q', '--verify', `refs/firstmate/${t}/head`]).ok) die(`task '${t}' already exists at ${w} (use another name, or: fm.js clean ${r} ${t})`);
   if (!fs.existsSync(path.join(r, '.firstmate'))) die(`run: fm.js init ${r}`);
   try { fs.mkdirSync(path.dirname(w), { recursive: true }); fs.accessSync(path.dirname(w), fs.constants.W_OK); }
   catch (e) { die(`cannot create the task workspace folder ${path.dirname(w)} (${e.code || e.message}). Set FM_WT_ROOT to a folder the agents may write to (now: ${wtRoot()}).`); }
-  const base = gitOut(r, ['rev-parse', 'HEAD']);
+  const base = gitOut(r, ['rev-parse', baseRef || 'HEAD']);
   const add = git(r, ['worktree', 'add', '-q', '--detach', w, base]);
   if (!add.ok) die(`git worktree add failed: ${add.err}`);
   git(r, ['update-ref', `refs/firstmate/${t}/base`, base]);
@@ -292,6 +294,7 @@ function gate(repoArg, t, cmd) {
   }
   const v = pass ? 'PASS' : 'FAIL';
   fs.writeFileSync(note, `${headc} ${v}\n`);
+  fs.appendFileSync(path.join(notesDir(r), `${t}.attempts`), `${headc} ${v}\n`);
   out(`[fm] gate ${t}: ${v}`);
   if (!pass) throw new Exit(1);
 }
@@ -449,7 +452,7 @@ function deliverLocked(r, t, args) {
   if (!opt.keep && clean) {
     if (fs.existsSync(w)) git(r, ['worktree', 'remove', '--force', w]);
     git(r, ['update-ref', '-d', B]); git(r, ['update-ref', '-d', H]);
-    for (const f of [note, `${note}.log`, slotFile(r, t)]) fs.rmSync(f, { force: true });
+    for (const f of taskRecordFiles(t)) fs.rmSync(path.join(notesDir(r), f), { force: true });
     out(`[fm] task ${t} removed`);
   }
   if (!clean) throw new Exit(1);
@@ -515,11 +518,13 @@ function status(repoArg) {
   }
 }
 
+// A task's working record; the patch (for undo), crew reports and token logs stay as history.
+const taskRecordFiles = (t) => ['gate', 'gate.log', 'slot', 'attempts', 'verdict', 'riskfloor', 'risk', 'locked', 'request', 'done', 'scenarios', 'arena', 'rescued', 'crew.pid'].map((x) => `${t}.${x}`);
 function removeTask(r, t) {
   const w = taskDir(r, t);
   if (fs.existsSync(w)) { if (!git(r, ['worktree', 'remove', '--force', w]).ok) fs.rmSync(w, { recursive: true, force: true }); }
   for (const k of ['base', 'head']) git(r, ['update-ref', '-d', `refs/firstmate/${t}/${k}`]);
-  for (const f of [`${t}.gate`, `${t}.gate.log`, `${t}.slot`]) fs.rmSync(path.join(notesDir(r), f), { force: true });
+  for (const f of taskRecordFiles(t)) fs.rmSync(path.join(notesDir(r), f), { force: true });
   out(`[fm] removed task ${t}`);
 }
 
@@ -774,6 +779,75 @@ async function judgeCmd(repoArg, t, rest) {
   if (v !== 'APPROVE') throw new Exit(1);
 }
 
+// ---------- ladder: the next step for a task, decided by code from its record ----------
+function ladder(r, t) {
+  const B = `refs/firstmate/${t}/base`; const H = `refs/firstmate/${t}/head`;
+  if (!git(r, ['rev-parse', '-q', '--verify', H]).ok) die(`no task '${t}'`);
+  const head = gitOut(r, ['rev-parse', H]);
+  const tries = readNote(r, `${t}.attempts`).split('\n').filter(Boolean).map((l) => l.split(/\s+/));
+  const say = (step, why) => { out(`NEXT: ${step}`); out(`- ${why}`); };
+  if (!tries.length) return head === gitOut(r, ['rev-parse', B]) ? say('build', 'no change yet: send a builder (fm.js crew --role builder)') : say('gate', 'saved but never gated: fm.js gate');
+  const [lastSha, last] = tries[tries.length - 1];
+  if (lastSha !== head) return say('gate', 'changed since the last gate: fm.js gate');
+  if (last === 'PASS') {
+    const risk = taskRisk(r, t).level; const vd = verdictOf(r, t);
+    if (risk === 'high') return say('ask captain', 'high risk: show the captain the change; deliver with --approve only after they agree');
+    if (risk === 'low') return say('deliver', 'gate PASS, low risk');
+    if (vd.sha === head && vd.v === 'APPROVE') return say('deliver', 'gate PASS, medium risk, judge APPROVE');
+    if (vd.sha === head && vd.v === 'REVISE') return say('fix', "the judge asked for changes: send its FIXES to the builder");
+    if (vd.sha === head && vd.v) return say('ask captain', `the judge said ${vd.v}`);
+    return say('judge', 'gate PASS, medium risk: fm.js judge');
+  }
+  let fails = 0; for (let i = tries.length - 1; i >= 0 && tries[i][1] === 'FAIL'; i--) fails += 1;
+  const arenaRan = taskNames(r, /^refs\/firstmate\/(.*)\/head$/).some((x) => x.startsWith(`${t}--`)) || fs.existsSync(path.join(notesDir(r), `${t}.arena`));
+  const rescued = fs.existsSync(path.join(notesDir(r), `${t}.rescued`));
+  if (fails <= 2) return say('fix', `gate FAIL ${fails} time(s): send the failing lines to the same builder`);
+  if (!arenaRan) return say('arena 3', `gate FAIL ${fails} times: try three approaches (fm.js arena ${r} ${t} --n 3)`);
+  if (!rescued) return say('judge rescue', 'the arena did not pass either: ask the judge to diagnose and rewrite the brief');
+  return say('ask captain', 'the judge rescue did not pass either: report to the captain with the diagnosis');
+}
+
+// ---------- arena: several builders on the same task from the same base; the judge picks ----------
+function arena(repoArg, t, args) {
+  const r = needRepo(repoArg); taskName(t);
+  const ni = args.indexOf('--n'); const n = ni >= 0 ? Number(args[ni + 1]) : 3;
+  if (!(n >= 2 && n <= 5)) die('--n must be 2 to 5');
+  const ri = args.indexOf('--request');
+  const base = git(r, ['rev-parse', '-q', '--verify', `refs/firstmate/${t}/base`]).ok ? gitOut(r, ['rev-parse', `refs/firstmate/${t}/base`]) : gitOut(r, ['rev-parse', 'HEAD']);
+  withLock(r, () => { for (const l of 'abcde'.slice(0, n)) startLocked(r, `${t}--${l}`, base); });
+  if (ri >= 0 && args[ri + 1]) fs.writeFileSync(path.join(notesDir(r), `${t}.request`), `${args[ri + 1].trim()}\n`);
+  fs.writeFileSync(path.join(notesDir(r), `${t}.arena`), `${n} ${base}\n`);
+  out(`[fm] arena ${t}: ${n} variants (${[...'abcde'.slice(0, n)].map((l) => `${t}--${l}`).join(', ')}) from ${base.slice(0, 7)}. Send one builder per variant, each with a different approach.`);
+}
+function arenaStatus(repoArg, t) {
+  const r = needRepo(repoArg); taskName(t);
+  const vs = taskNames(r, /^refs\/firstmate\/(.*)\/head$/).filter((x) => x.startsWith(`${t}--`)).sort();
+  if (!vs.length) die(`no arena for task '${t}'`);
+  for (const v of vs) {
+    const g = (readNote(r, `${v}.gate`).split(/\s+/));
+    const state = g[0] && g[0] === gitOut(r, ['rev-parse', `refs/firstmate/${v}/head`]) ? g[1] : (g[1] ? 'stale' : 'not run');
+    out(`  ${v} | gate ${state} | ${gitOut(r, ['diff', '--shortstat', `refs/firstmate/${v}/base`, `refs/firstmate/${v}/head`]).trim() || 'no change'}`);
+  }
+}
+function arenaPick(repoArg, t, letter) {
+  const r = needRepo(repoArg); taskName(t);
+  const v = `${t}--${letter}`;
+  if (!git(r, ['rev-parse', '-q', '--verify', `refs/firstmate/${v}/head`]).ok) die(`no variant '${v}'`);
+  withLock(r, () => {
+    if (git(r, ['rev-parse', '-q', '--verify', `refs/firstmate/${t}/head`]).ok) removeTask(r, t);
+    const from = taskDir(r, v); const to = path.join(path.dirname(from), t);
+    if (!git(r, ['worktree', 'move', from, to]).ok) die(`could not move ${from} to ${to}`);
+    for (const k of ['base', 'head']) git(r, ['update-ref', `refs/firstmate/${t}/${k}`, gitOut(r, ['rev-parse', `refs/firstmate/${v}/${k}`])]);
+    for (const k of ['base', 'head']) git(r, ['update-ref', '-d', `refs/firstmate/${v}/${k}`]);
+    for (const ext of ['gate', 'gate.log', 'slot', 'attempts', 'locked', 'risk']) {
+      const f = path.join(notesDir(r), `${v}.${ext}`);
+      if (fs.existsSync(f)) fs.renameSync(f, path.join(notesDir(r), `${t}.${ext}`));
+    }
+    for (const other of taskNames(r, /^refs\/firstmate\/(.*)\/head$/).filter((x) => x.startsWith(`${t}--`))) removeTask(r, other);
+  });
+  out(`[fm] arena ${t}: kept variant ${letter}; the others are removed. Graft ideas from their reports with a builder, then gate, judge and deliver ${t}.`);
+}
+
 // ---------- crew: headless agy processes, one per task ----------
 async function crewCmd(repoArg, rest) {
   const r = needRepo(repoArg);
@@ -814,6 +888,10 @@ function main(argv) {
   switch (cmd) {
     case 'shape': return shape(arg, rest);
     case 'usage': return usageCmd(arg, rest);
+    case 'ladder': { const r = needRepo(arg); taskName(rest[0]); return ladder(r, rest[0]); }
+    case 'arena': return arena(arg, rest[0], rest.slice(1));
+    case 'arena-status': return arenaStatus(arg, rest[0]);
+    case 'arena-pick': return arenaPick(arg, rest[0], rest[1]);
     case 'dossier': { const r = needRepo(arg); taskName(rest[0]); return out(dossier(r, rest[0])); }
     case 'judge': return judgeCmd(arg, rest[0], rest.slice(1));
     case 'verdict': {
