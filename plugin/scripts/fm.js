@@ -24,13 +24,16 @@
 //   fm.js crew    <repo> --batch <file.json>  run the crew as headless agy processes, in parallel (see fm-crew.js);
 //                                             after each builder, fm.js saves and gates its workspace itself
 //   fm.js dossier <repo> <task>              what the judge reads: request, done-when, risk, locked tests, gate, review (≤ 30 KB)
-//   fm.js judge   <repo> <task> [--model strong|second]  System 2: one headless run on the strong model; records the verdict
+//   fm.js judge   <repo> <task> [--model strong|second] [--rescue]  System 2: the judges (strong and second) in parallel;
+//                                             the most cautious verdict is recorded
 //   fm.js verdict <repo> <task> APPROVE|REVISE|REJECT|HUMAN "<reason>" [--risk medium|high]   record a verdict by hand
 //   fm.js ladder  <repo> <task>              the next step from the task's record: build, gate, fix, arena, judge, deliver, ask captain
 //   fm.js arena   <repo> <task> --n 3 [--request ".."]   variants <task>--a.. from one base; arena-status; arena-pick <task> <letter>
 //   fm.js report  <repo> [--since <iso>]     merged tasks, open tasks and their state, crew tokens and the strong model's share
 //   fm.js trust   <repo>                     how many merges were kept, undone or reverted by the captain
 //   fm.js usage   <conversation-id> [--brain <dir>]...  tokens per chat and subagent, and the strong model's share
+//   fm.js queue   <repo> [add "<request>"… | drop <id>]  the captain's requests for while they are away
+//   fm.js afk     <repo> [--max N] [--detach] | --stop   one headless first-mate chat per queued request (see fm-afk.js)
 // Tasks live in refs/firstmate/<task>/{base,head}, never in refs/heads, so `git branch` and pushes never see them.
 // Node only (no bash, no ruby), so the same script runs on macOS, Linux and Windows.
 
@@ -783,27 +786,41 @@ function verdictOf(r, t) {
   return { sha: sha || '', v: v || '', source: source || 'manual' };
 }
 
+// The judges: every model in the `judges` setting, in parallel, and the most cautious verdict counts, so a judge of
+// another family can stop what one family would let through. --model picks one judge; a rescue asks the other
+// family (second) for a fresh diagnosis. A judge that fails or gives no verdict makes it HUMAN: the captain decides.
 async function judgeCmd(repoArg, t, rest) {
   const r = needRepo(repoArg); taskName(t);
+  const cfg = loadConfig(r);
   const mi = rest.indexOf('--model');
   const text = dossier(r, t);
   const { crew, format, startLine, CrewError } = require('./fm-crew.js');
-  let res;
   const rescue = rest.includes('--rescue');
+  const panel = Array.isArray(cfg.judges) && cfg.judges.length ? cfg.judges.map(String) : ['strong'];
+  const models = mi >= 0 ? [rest[mi + 1]] : rescue ? [panel.includes('second') ? 'second' : panel[0]] : [...new Set(panel)];
   if (rescue) fs.writeFileSync(path.join(notesDir(r), `${t}.rescued`), `${new Date().toISOString()}\n`);
   const ask = rescue
     ? 'RESCUE: the gate keeps failing for this task, also after several approaches. Diagnose the cause from the GATE lines and the diff, answer VERDICT: REVISE (or HUMAN when the task cannot be done as asked) and give a new approach as numbered FIXES.'
     : 'Judge this task and answer in your verdict format.';
-  try { [res] = await crew(r, [{ task: t, role: 'judge', model: mi >= 0 ? rest[mi + 1] : undefined, brief: `${ask}\n\n${text}` }], { onStart: (ms) => out(startLine(ms)) }); }
+  let results;
+  try { results = await crew(r, models.map((model) => ({ task: t, role: 'judge', model, brief: `${ask}\n\n${text}` })), { onStart: (ms) => out(startLine(ms)) }); }
   catch (e) { if (e instanceof CrewError) die(e.message); throw e; }
-  out(format(res));
-  if (!res.ok) throw new Exit(1);
-  const resp = String(res.json.response || '');
-  const v = (resp.match(/^\s*VERDICT:\s*(APPROVE|REVISE|REJECT|HUMAN)\b/m) || [])[1];
-  if (!v) die(`the judge gave no VERDICT line; its report is in ${res.file}`);
-  const raise = (resp.match(/^\s*RISK:\s*(low|medium|high)\b/mi) || [])[1];
-  writeVerdict(r, t, v, `judge report: ${res.file}`, raise && raise.toLowerCase(), 'judge');
-  out(`[fm] verdict for task ${t}: ${v}${raise ? ` (risk raised to at least ${raise.toLowerCase()})` : ''}`);
+  const votes = results.map((res) => {
+    out(format(res));
+    const resp = res.ok ? String(res.json.response || '') : '';
+    const v = (resp.match(/^\s*VERDICT:\s*(APPROVE|REVISE|REJECT|HUMAN)\b/m) || [])[1];
+    const raise = (resp.match(/^\s*RISK:\s*(low|medium|high)\b/mi) || [])[1];
+    const failed = !res.ok ? `FAILED (${String(res.error).split('\n')[0].slice(0, 80)})` : v ? '' : 'FAILED (no VERDICT line)';
+    return { model: res.m.model.id, v: failed ? 'HUMAN' : v, failed, raise: raise && raise.toLowerCase(), file: res.file };
+  });
+  const v = votes.reduce((a, x) => (VERDICTS.indexOf(x.v) > VERDICTS.indexOf(a) ? x.v : a), 'APPROVE');
+  const { maxRisk } = require('./fm-risk.js');
+  const raise = votes.map((x) => x.raise).filter(Boolean).reduce((a, x) => maxRisk(a, x), '');
+  writeVerdict(r, t, v, `judges: ${votes.map((x) => `${x.model} ${x.failed || x.v} (report ${x.file})`).join('; ')}`, raise, 'judge');
+  const failed = votes.filter((x) => x.failed);
+  if (failed.length) out(`[fm] judge ${failed.map((x) => x.model).join(', ')} ${failed.map((x) => x.failed).join(', ')}, so the verdict is HUMAN: the captain decides (fm.js deliver ${r} ${t} --approve), or sets the judges with fm.js config ${r} judges '["strong"]'`);
+  else if (new Set(votes.map((x) => x.v)).size > 1) out(`[fm] the judges disagree (${votes.map((x) => `${x.model} ${x.v}`).join(', ')}); the most cautious verdict counts`);
+  out(`[fm] verdict for task ${t}: ${v}${raise ? ` (risk raised to at least ${raise})` : ''}`);
   if (v !== 'APPROVE') throw new Exit(1);
 }
 
@@ -950,6 +967,36 @@ function report(repoArg, args) {
     }
   } catch {}
   out(`crew tokens: ${total} (strong model ${strong}, ${total ? Math.floor((100 * strong) / total) : 0}%)`);
+  const afkRows = readNote(r, 'afk.jsonl').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((x) => x && after(x.time));
+  if (afkRows.length) {
+    const n = afkRows.reduce((a, x) => { const u = x.usage || {}; return a + (Number(u.input_tokens) || 0) + (Number(u.cache_read_tokens) || 0) + (Number(u.output_tokens) || 0); }, 0);
+    out(`first mate (afk) tokens: ${n} in ${afkRows.length} chat(s)`);
+  }
+}
+
+// ---------- queue and afk: the captain's requests, worked through while they are away ----------
+function queueCmd(repoArg, rest) {
+  const r = needRepo(repoArg);
+  const q = require('./fm-afk.js');
+  try {
+    if (rest[0] === 'add') { const ids = q.add(r, rest.slice(1)); return out(`[fm] queued ${ids.map((i) => `#${i}`).join(' ')}; to work through the queue while away: fm.js afk ${r} --detach`); }
+    if (rest[0] === 'drop') { q.drop(r, Number(rest[1])); return out(`[fm] dropped #${rest[1]}`); }
+    if (rest.length) die(`unknown queue command '${rest[0]}' (add, drop)`);
+    return out(q.list(r).join('\n'));
+  } catch (e) { if (e instanceof q.AfkError) die(e.message); throw e; }
+}
+
+async function afkCmd(repoArg, rest) {
+  const r = needRepo(repoArg);
+  const q = require('./fm-afk.js');
+  try {
+    if (rest.includes('--stop')) return out(q.stop(r));
+    if (rest.includes('--detach')) { const d = q.detach(r, rest); return out(`[fm] afk runner started in the background (pid ${d.pid}); its output: ${d.outFile}. Stop it after the current item with: fm.js afk ${r} --stop`); }
+    const mi = rest.indexOf('--max');
+    const code = await q.afk(r, { max: mi >= 0 ? Number(rest[mi + 1]) || 0 : 0, log: out });
+    if (code) throw new Exit(code);
+    return undefined;
+  } catch (e) { if (e instanceof q.AfkError) die(e.message); throw e; }
 }
 
 // ---------- crew: headless agy processes, one per task ----------
@@ -1007,6 +1054,8 @@ function main(argv) {
       return out(`[fm] verdict for task ${rest[0]}: ${rest[1]}`);
     }
     case 'crew': return crewCmd(arg, rest);
+    case 'queue': return queueCmd(arg, rest);
+    case 'afk': return afkCmd(arg, rest);
     case 'init': return init(arg, rest[0]);
     case 'fact': return fact(arg, rest);
     case 'start': return start(arg, rest[0], rest.slice(1));

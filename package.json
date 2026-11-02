@@ -1,6 +1,6 @@
 {
   "name": "antigravity-firstmate",
-  "version": "1.0.0-alpha.2",
+  "version": "1.0.0-alpha.3",
   "description": "firstmate for Google Antigravity (IDE, App, CLI): a first mate on a cheap model, a Flash crew in parallel workspaces, code gates, a strong judge when the risk calls for it, merges with undo.",
   "bin": {
     "antigravity-firstmate": "install.js"

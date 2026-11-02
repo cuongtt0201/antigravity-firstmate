@@ -92,7 +92,8 @@ function prepare(r, spec, cfg) {
   const limit = Number(process.env.FM_ARGV_LIMIT) || (process.platform === 'win32' ? 24000 : 100000);
   if (prompt.length > limit) {
     if (ROLES[role].inTask) throw new CrewError(`task '${task}': the builder's prompt is ${prompt.length} characters (limit ${limit}); shorten the brief`);
-    const file = path.join(notesDir(r), `${task}.${role}.prompt.md`);
+    // one file per model, so two judges of a panel never share (and overwrite) one
+    const file = path.join(notesDir(r), `${task}.${role}${model.key === ROLES[role].def ? '' : `.${model.key.replace(/[^\w.-]/g, '_')}`}.prompt.md`);
     fs.mkdirSync(notesDir(r), { recursive: true });
     fs.writeFileSync(file, prompt);
     prompt = `Read the file ${file} first: it holds your full instructions and the material for this task. Follow it exactly and answer in the format it asks for.`;

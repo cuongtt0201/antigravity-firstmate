@@ -24,7 +24,8 @@ IDE chats load the plugin's guard and skills but have no `invoke_subagent` (surv
 | D3 | No "go": instructions are acted on; high risk waits for the captain (`deliver` exit 3, `--approve`) | `agents/firstmate.md`, `fm.js deliver` |
 | D4 | App support is kept (nothing in v1 needs App-only features); the IDE is the main target | README |
 | D5 | Guard packs `core` + `devops` on by default | `packs` in config |
-| D6 | Queue / away mode → v1.1 | — |
+| D6 | Queue / away mode moved into v1.0 (alpha.3): `fm.js queue` and `fm.js afk`, one fresh headless first-mate chat per request; needs merge mode `commit`, a branch that is not protected and a clean tree | `fm-afk.js`, `skills/afk` |
+| D8 | The judge is a panel of two model families (`judges: ["strong","second"]`), run in parallel; the most cautious verdict counts, a failed judge makes it HUMAN; a rescue asks `second` | `fm.js judge`, `judges` in config |
 | D7 | Plugin id stays `flash-ultra` in this MVP: renaming moves the install folder for every existing user, so it waits for the release step | install.js |
 
 ## Models (config `models`)
@@ -34,4 +35,5 @@ IDE chats load the plugin's guard and skills but have no `invoke_subagent` (surv
 | `fast` | `gemini-3.8-flash-low` | readers, quick lookups |
 | `standard` | `gemini-3.8-flash-medium` | builders, testers |
 | `strong` | `gemini-4-argon-medium` | judge (System 2) |
-| `second` | `claude-sonnet-5-5-medium` | optional second reviewer from another model family |
+| `second` | `claude-sonnet-5-5-medium` | the second judge, from another model family (on by default since alpha.3) |
+| `mate` | `gemini-3.8-flash-medium` | the first mate in `fm.js afk` runs |

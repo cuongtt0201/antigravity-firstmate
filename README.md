@@ -20,7 +20,7 @@
 npx -y github:cuongtt0201/antigravity-firstmate
 ```
 
-> **v1.0.0-alpha.2.** This is the first version built for the Antigravity IDE. See [What changed in v1](#what-changed-in-v1).
+> **v1.0.0-alpha.3.** This is the first version built for the Antigravity IDE. See [What changed in v1](#what-changed-in-v1).
 
 ---
 
@@ -33,8 +33,9 @@ firstmate puts each model where it pays off:
 - **The first mate (System 1) runs in your chat on a cheap model.** It answers what is small and turns real work into tasks.
 - **The crew runs in parallel, on Flash.** Each builder works in its own git worktree, outside your repo. Readers answer one question each, with `file:line` evidence. Hard tasks get an *arena*: three builders try three approaches.
 - **Code decides what models should not.** It runs the gates (your project's typecheck, lint and test, plus Helm, Terraform, YAML and JSON checks). It classifies the risk of every change, and it decides the next step (`fm.js ladder`).
-- **The judge (System 2) is Argon, called only when the risk calls for it.** It reads a 30 KB dossier of the task, never your chat history.
-- **You stay in charge of what matters.** Low-risk changes that pass are merged. Medium-risk ones are merged once the judge approves. High-risk ones wait for you. Every merge can be undone with one command.
+- **The judges (System 2) are Argon and Claude, called only when the risk calls for it.** Two model families judge in parallel, so one family's blind spot does not merge on its own; the most cautious verdict counts. They read a 30 KB dossier of the task, never your chat history.
+- **You stay in charge of what matters.** Low-risk changes that pass are merged. Medium-risk ones are merged once both judges approve. High-risk ones wait for you. Every merge can be undone with one command.
+- **It keeps working while you are away.** `/afk` queues your requests; a runner works through them, one fresh first-mate chat per request, one commit per task.
 
 On one real task (fix a unicode bug against a locked test, with an arena and two judge calls), Argon used **12%** of the tokens. A v0.12 chat measured 44–57%. See [docs/benchmarks.md](docs/benchmarks.md).
 
@@ -52,7 +53,7 @@ flowchart TB
   end
   gate["fm.js gate<br/>project tests, lint, typecheck<br/>locked acceptance tests"]
   risk["fm.js risk<br/>low · medium · high"]
-  judge["<b>Judge</b> · System 2 · Argon<br/>reads the task's dossier only"]
+  judge["<b>Judges</b> · System 2 · Argon + Claude<br/>read the task's dossier only"]
   tree[("Your branch<br/>one commit per task, fm.js undo")]
 
   you <-->|"message / report"| fm
@@ -72,7 +73,7 @@ A change, as the first mate runs it:
 2. **Acceptance tests first** for medium- or high-risk work. A builder in the tester role writes them, `fm.js lock` freezes them, and the crew can no longer change them (the gate fails and the guard refuses).
 3. **Crew.** `fm.js crew <repo> --batch <file>` starts every builder at once as a headless `agy` process in its own workspace. When a builder stops, fm.js records its work and runs the gate.
 4. **Ladder.** `fm.js ladder <repo> <task>` reads the task's record and says what comes next: `fix` (send the failing lines back), `arena 3`, `judge`, `deliver`, or `ask captain`.
-5. **Judge.** `fm.js judge` runs Argon once on the task's dossier: request, done-when, risk, locked tests, gate lines, the diff with every unchanged caller. It returns APPROVE, REVISE, REJECT or HUMAN.
+5. **Judges.** `fm.js judge` runs Argon and Claude in parallel on the task's dossier: request, done-when, risk, locked tests, gate lines, the diff with every unchanged caller. Each returns APPROVE, REVISE, REJECT or HUMAN; the most cautious one counts, and a disagreement is reported. If a judge fails, the verdict is HUMAN. `fm.js config <repo> judges '["strong"]'` keeps one judge.
 6. **Deliver.** `fm.js deliver` merges the task the way the repo is set: `propose`, `apply` (uncommitted) or `commit` (one commit per task, trailer `Firstmate-Task:`). High risk stops with exit 3 until you say yes.
 7. **Report.** `fm.js report` lists what was merged, what waits for you and why, and the crew's tokens with the strong model's share. `fm.js trust` shows how many merges you kept.
 
@@ -87,6 +88,21 @@ Talk normally. In the IDE, start a chat with `/firstmate`. In the App or the CLI
 | "The pod keeps restarting on prod" | Hypotheses, one reader each, and the fix as commands for you to run |
 | "Add retry with backoff to the API client" | Tasks, builders in parallel, gates, the judge if needed, then a commit per task |
 | "Write the case study" | `/best`: three drafts race and the winner is rewritten from scratch |
+| "/afk: add the --json flag, then fix the unicode slugs" | Queues both, starts the runner, and tells you how to check when you are back |
+
+## While you are away (/afk)
+
+Type `/afk` with what you want done, or queue it yourself and start the runner in a terminal:
+
+```bash
+node ~/.gemini/config/plugins/flash-ultra/scripts/fm.js queue . add "Add a --json flag to cli.js" "Fix the unicode slugs"
+node ~/.gemini/config/plugins/flash-ultra/scripts/fm.js afk . --detach
+```
+
+- Each request runs in **its own new first-mate chat** (`agy`, Flash), told that it runs unattended: no questions, only `fm.js` commands, high risk left for you. No chat grows long, so nothing is reread.
+- The runner needs merge mode `commit` (`fm.js config . merge commit`), a branch that is not protected and a clean working tree, so every item starts from the commit the last one left. It stops if an item leaves uncommitted changes.
+- When you are back: `fm.js queue .` (each item: done, failed, waiting, with its last line) and `fm.js report .` (commits, what waits for you, tokens). `fm.js undo . <task>` takes a commit back. `fm.js afk . --stop` stops after the current item.
+- The runner gives each chat its own session permissions (fm.js, the brief folder, the task workspaces); `--grant` is not needed for it.
 
 ## Safe by default
 
@@ -159,7 +175,7 @@ Tasks started under v0.12 inside the repo still work. `fm.js clean <repo> --lega
 - Without `--grant`, the headless CLI refuses the first mate's first `fm.js` command (see Install, step 4).
 - In the IDE, the plugin's `SessionStart` and `PreInvocation` hooks are not confirmed yet. The guard runs. `tools/probe/` and [docs/ide-capabilities.md](docs/ide-capabilities.md) describe how to check the rest.
 - Headless crew runs end when the CLI refuses a command, so builders edit with file tools only and fm.js runs the checks after them.
-- The judge and the crew are all Gemini unless you set `models.second` (a model of another family) and call `fm.js judge --model second`.
+- The crew is all Gemini; only the second judge is of another family. Claude runs through `agy` on your Antigravity account: if it is not available there, every medium-risk task comes back as HUMAN until you set `fm.js config <repo> judges '["strong"]'`.
 - `fm.js review` finds uses of changed names with `git grep`; calls through variables or reflection are not listed.
 - Prompt rules guide the models; only the hooks and scripts enforce.
 

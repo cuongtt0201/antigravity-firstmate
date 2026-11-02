@@ -90,5 +90,5 @@ done
 echo "-- I8: long prompts do not ride on the command line"
 JO8=$(FM_ARGV_LIMIT=500 fm judge "$C" j1 2>&1)
 check "I8: a long judge prompt goes through a file" 1 "$(ls "$C/.firstmate/notes/" | grep -c '^j1\.judge\.prompt\.md$')"
-check "I8: ...and the judge still answers" 1 "$(grep -c 'VERDICT: APPROVE' <<< "$JO8")"
+check "I8: ...and both judges of the panel still answer" 2 "$(grep -c 'VERDICT: APPROVE' <<< "$JO8")"
 check "I8: a builder prompt over the limit is refused" 2 "$(FM_ARGV_LIMIT=50 fm crew "$C" b1 --role builder --brief x >/dev/null 2>&1; echo $?)"

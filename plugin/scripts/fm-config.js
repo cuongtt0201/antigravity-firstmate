@@ -14,8 +14,11 @@ const DEFAULTS = {
   checkTimeoutSec: 600,
   portBase: 3100,
   packs: ['core', 'devops'],
-  models: { fast: 'gemini-3.8-flash-low', standard: 'gemini-3.8-flash-medium', strong: 'gemini-4-argon-medium', second: 'claude-sonnet-5-5-medium' },
-  caps: { perCall: 6, crewPerDay: 40, judgePerDay: 15 },
+  // mate: the first mate's model in afk runs; second: a judge of another family than strong
+  models: { fast: 'gemini-3.8-flash-low', standard: 'gemini-3.8-flash-medium', strong: 'gemini-4-argon-medium', second: 'claude-sonnet-5-5-medium', mate: 'gemini-3.8-flash-medium' },
+  judges: ['strong', 'second'], // the panel fm.js judge runs in parallel; the most cautious verdict counts
+  caps: { perCall: 6, crewPerDay: 40, judgePerDay: 30 },
+  afkItemTimeoutSec: 3600, // one queued request in fm.js afk
   autoMergeMaxRisk: 'medium', // highest risk merged without the captain: low | medium
   handoffAtTokens: 150000,
 };

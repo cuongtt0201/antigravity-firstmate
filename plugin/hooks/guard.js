@@ -312,9 +312,11 @@ function main() {
   // The crew runs fm.js (save, gate) but never writes the records delivery trusts by hand: gate results
   // and notes, facts.md, and the task refs.
   // The crew runs fm.js to save, gate and look; deciding (verdicts, delivery, settings, more crew) is the first mate's.
+  // An allow list: a command added to fm.js later stays the first mate's until it is listed here.
   if (/^(worker|checker|explorer)$/.test(agent) && decision.decision === 'allow' && tool === 'run_command') {
     const calls = cmd.match(FM_SCRIPT_RE) || [];
-    if (calls.some((c) => /\s(verdict|judge|deliver|undo|config|lock|crew|clean|sweep|init|fact)\b/.test(c.replace(FM_CALL_RE, '')))) {
+    const CREW_FM = /^(save|gate|review|status|path|risk|dossier|ladder|shape|report|trust|usage)$/;
+    if (calls.some((c) => !CREW_FM.test(c.replace(FM_CALL_RE, '').trim().replace(/^["']/, '').split(/\s+/)[0] || ''))) {
       decision = { decision: 'deny', reason: '[guard] The crew may run fm.js save, gate, review, status, path, risk and dossier. Verdicts, delivery, settings, locks and more crew are the first mate\'s; say what you need in your report.' };
     }
   }
