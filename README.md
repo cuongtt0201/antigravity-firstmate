@@ -20,7 +20,7 @@
 npx -y github:cuongtt0201/antigravity-firstmate
 ```
 
-> **v1.0.0-alpha.6.** This is the first version built for the Antigravity IDE. See [What changed in v1](#what-changed-in-v1).
+> **v1.0.0-alpha.7.** This is the first version built for the Antigravity IDE. See [What changed in v1](#what-changed-in-v1).
 
 ---
 

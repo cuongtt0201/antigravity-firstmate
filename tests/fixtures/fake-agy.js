@@ -37,6 +37,10 @@ if (usageFile && prompt.includes('EXHAUST_GEMINI')) fs.writeFileSync(usageFile, 
 // FAIL_IF_MODEL:<s> / REVISE_IF_MODEL:<s>: only a model whose id contains <s> fails, or answers REVISE as a judge
 const onlyFor = (k) => { const s = (prompt.match(new RegExp(`${k}:(\\S+)`)) || [])[1]; return !!s && model.includes(s); };
 const sleep = Number((prompt.match(/SLEEP:(\d+)/) || [])[1] || 0);
+// AFK_WRITE_BATCH:<task>:<file> in an afk first mate's prompt: write an fm.js run batch (one builder that writes <file>)
+// to the BATCH FILE the prompt names
+const afkBatch = prompt.match(/AFK_WRITE_BATCH:([\w-]+):([\w.-]+)/); const batchFile = (prompt.match(/BATCH FILE: (\S+)/) || [])[1];
+if (afkBatch && batchFile) { fs.mkdirSync(require('path').dirname(batchFile), { recursive: true }); fs.writeFileSync(batchFile, JSON.stringify([{ task: afkBatch[1], request: afkBatch[1], brief: `WRITE_FILE:${afkBatch[2]}` }])); }
 const finish = () => {
   const m = prompt.match(/WRITE_FILE:([\w.-]+)/);
   // FIXED_IN_ROUND2: the first round writes the file badly (invalid JSON), a fix round writes it right

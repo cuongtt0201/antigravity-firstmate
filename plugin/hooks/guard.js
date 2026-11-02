@@ -273,6 +273,14 @@ function main() {
   const looked = decision.decision === 'allow' && !ENV_ROLE ? agentOf(convoId, st, ev.modelName || p.modelName, ev) : '';
   const agent = decision.decision === 'allow' ? (ENV_ROLE || V1_ROLE[looked] || looked) : '';
 
+  // In an afk run (fm.js afk sets FM_AFK) the first mate only plans: the runner runs its batch after it.
+  if (process.env.FM_AFK && !ENV_ROLE && decision.decision === 'allow' && tool === 'run_command') {
+    const calls = cmd.match(FM_SCRIPT_RE) || [];
+    if (calls.some((c) => /^(run|crew|judge|deliver|arena|arena-pick|verdict|undo|afk)$/.test(c.replace(FM_CALL_RE, '').trim().replace(/^["']/, '').split(/\s+/)[0] || ''))) {
+      decision = { decision: 'deny', reason: '[guard] In an afk run you only plan: write the batch to the BATCH FILE your prompt names and end. The runner runs it right after you and records what happens.' };
+    }
+  }
+
   // First-mate budget. Its facts, notes, the plugin's playbooks and fm.js are free; every other read
   // and every other command segment counts (so chaining a free command does not hide a read).
   if (agent === 'firstmate' && (READ_TOOLS.has(tool) || tool === 'run_command')) {

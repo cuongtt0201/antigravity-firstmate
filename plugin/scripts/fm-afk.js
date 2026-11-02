@@ -79,18 +79,39 @@ function checkReady(r, cfg) {
   if (pid) throw new AfkError(`an afk runner is already working on this repo (pid ${pid}); stop it with: fm.js afk ${r} --stop`);
 }
 
-function matePrompt(item) {
+const batchFileOf = (r, item) => `${slash(r)}/.firstmate/briefs/afk-${item.id}.json`;
+
+// The first mate only plans: it writes the fm.js run batch and ends, and the runner runs the batch after it. A chat
+// that waited on a long command would wake up with its cache expired and reread everything.
+function matePrompt(item, r) {
   return [
-    `You are running unattended: the captain is away (fm.js afk, queue item #${item.id}). Do the request below the usual way: brief the tasks and run them with one fm.js run --batch call.`,
-    '- Do not ask questions. When the request has two readings, take the narrower one and say so in your report.',
-    '- Run only fm.js commands: the gate already runs the project\'s checks.',
-    '- High risk stays for the captain: when fm.js deliver stops with exit 3, leave that task and say so.',
-    '- No quota stops you too: when an fm.js command exits 4, do not retry; leave the task and say what waits.',
-    '- End with a short report: what was delivered (task and commit), what waits for the captain and why.',
+    `You are running unattended: the captain is away (fm.js afk, queue item #${item.id}). Plan the request below; the runner does the rest.`,
+    '- Read only what you need to split the work into tasks and brief each builder well.',
+    '- Write the batch for fm.js run (the JSON array your instructions describe: task, request, as, model, check, brief) to the BATCH FILE below, then end with a short plan: the tasks and why.',
+    '- Do not run fm.js run, crew, judge or deliver yourself: the runner runs your batch right after you and records what happens.',
+    '- Do not ask questions. When the request has two readings, take the narrower one and say so in your plan.',
+    '- A request that only asks a question needs no batch: answer it.',
     '',
+    `BATCH FILE: ${batchFileOf(r, item)}`,
     'REQUEST:',
     item.request,
   ].join('\n');
+}
+
+// Runs a batch with fm.js run in its own process; resolves to { code, said } (said: its lines about the tasks).
+function runBatch(r, file, timeoutSec) {
+  return new Promise((resolve) => {
+    let out = '';
+    const child = spawn(process.execPath, [path.join(__dirname, 'fm.js'), 'run', r, '--batch', file], { cwd: r, windowsHide: true });
+    const killer = setTimeout(() => { try { child.kill(); } catch {} }, (timeoutSec + 120) * 1000);
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { out += d; });
+    child.on('close', (code) => {
+      clearTimeout(killer);
+      const said = out.split('\n').filter((l) => /^\[fm\] run [\w-]+: (delivered|waits|stopped)|^\[fm\] (ERROR|WAIT)/.test(l)).join('\n');
+      resolve({ code: code === null ? 1 : code, said: said || out.trim().split('\n').slice(-5).join('\n') });
+    });
+  });
 }
 
 // The run's own permissions, for this chat only: fm.js, the brief folder and the task workspaces.
@@ -177,7 +198,23 @@ async function afk(r, { max = 0, log }) {
       const item = editQueue(r, (q) => { const it = q.find((x) => x.state === 'waiting'); if (it) Object.assign(it, { state: 'running', started: now() }); return it ? { ...it } : null; });
       if (!item) break;
       log(`[fm] afk: item #${item.id} started: ${item.request}`);
-      const res = await runMate(r, mateArgs(r, cfg, matePrompt(item)), Number(cfg.afkItemTimeoutSec) || 3600);
+      // an item cut short by quota after its plan: its batch runs again, with no new chat
+      if (item.batch && fs.existsSync(item.batch)) {
+        ran += 1;
+        const b = await runBatch(r, item.batch, Number(cfg.afkItemTimeoutSec) || 3600);
+        if (b.code === 4) {
+          editQueue(r, (q) => { const it = q.find((x) => x.id === item.id); if (it) Object.assign(it, { state: 'waiting', summary: `waits for quota, batch kept: ${b.said}` }); });
+          log(`[fm] afk: item #${item.id} waits for quota again`); ran -= 1; continue;
+        }
+        editQueue(r, (q) => { const it = q.find((x) => x.id === item.id); if (it) Object.assign(it, { state: b.code === 0 || b.code === 3 ? 'done' : 'failed', finished: now(), summary: b.said }); });
+        log(`[fm] afk: item #${item.id} ${b.code === 0 || b.code === 3 ? 'done' : 'FAILED'}: ${b.said.split('\n').pop()}`);
+        if (!(b.code === 0 || b.code === 3)) failed += 1;
+        if (git(r, ['status', '--porcelain'])) { why = `item #${item.id} left uncommitted changes in the working tree; stopped so the next item does not start on top of them`; failed += 1; break; }
+        continue;
+      }
+      const batchFile = batchFileOf(r, item);
+      fs.rmSync(batchFile, { force: true });
+      const res = await runMate(r, mateArgs(r, cfg, matePrompt(item, r)), Number(cfg.afkItemTimeoutSec) || 3600);
       ran += 1;
       const said = res.ok ? String(res.json.response || '').trim() || '(the first mate ended without a report)' : `FAILED: ${res.error}`;
       const u = (res.json && res.json.usage) || {};
@@ -191,10 +228,22 @@ async function afk(r, { max = 0, log }) {
         if (git(r, ['status', '--porcelain'])) { why = `item #${item.id} left uncommitted changes in the working tree; stopped so the next item does not start on top of them`; failed += 1; break; }
         continue;
       }
-      editQueue(r, (q) => { const it = q.find((x) => x.id === item.id); if (it) Object.assign(it, { state: res.ok ? 'done' : 'failed', finished: now(), seconds: Math.round(res.ms / 1000), conversation_id: res.json && res.json.conversation_id, summary: said.slice(0, 4000) }); });
       fs.appendFileSync(path.join(notesDir(r), 'afk.jsonl'), `${JSON.stringify({ time: now(), id: item.id, ok: res.ok, conversation_id: res.json && res.json.conversation_id, seconds: Math.round(res.ms / 1000), usage: u })}\n`);
-      log(`[fm] afk: item #${item.id} ${res.ok ? 'done' : 'FAILED'} in ${Math.round(res.ms / 1000)}s: ${said.split('\n').filter(Boolean).pop().slice(0, 200)}`);
-      if (!res.ok) failed += 1;
+      // the plan is in; the runner runs its batch (a question has none: the first mate's answer is the result)
+      let state = res.ok ? 'done' : 'failed'; let summary = said;
+      if (res.ok && fs.existsSync(batchFile)) {
+        log(`[fm] afk: item #${item.id} planned; running its batch`);
+        const b = await runBatch(r, batchFile, Number(cfg.afkItemTimeoutSec) || 3600);
+        summary = `${said.split('\n').filter(Boolean).slice(-3).join('\n')}\n${b.said}`;
+        if (b.code === 4) {
+          editQueue(r, (q) => { const it = q.find((x) => x.id === item.id); if (it) Object.assign(it, { state: 'waiting', batch: batchFile, summary: `waits for quota, batch kept: ${b.said}` }); });
+          log(`[fm] afk: item #${item.id} waits for quota; its batch runs when the quota is back`); ran -= 1; continue;
+        }
+        state = b.code === 0 || b.code === 3 ? 'done' : 'failed';
+      }
+      editQueue(r, (q) => { const it = q.find((x) => x.id === item.id); if (it) Object.assign(it, { state, finished: now(), seconds: Math.round(res.ms / 1000), conversation_id: res.json && res.json.conversation_id, summary: summary.slice(0, 4000) }); });
+      log(`[fm] afk: item #${item.id} ${state === 'done' ? 'done' : 'FAILED'} in ${Math.round((Date.now() - Date.parse(item.started)) / 1000)}s: ${summary.split('\n').filter(Boolean).pop().slice(0, 200)}`);
+      if (state !== 'done') failed += 1;
       if (git(r, ['status', '--porcelain'])) { why = `item #${item.id} left uncommitted changes in the working tree; stopped so the next item does not start on top of them`; failed += 1; break; }
     }
   } finally { cleanup(); process.removeListener('SIGINT', onSignal); process.removeListener('SIGTERM', onSignal); }
