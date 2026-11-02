@@ -16,8 +16,11 @@ check "crew: unknown role is refused" 2 "$(fm crew "$C" b1 --role pirate --brief
 check "crew: a builder needs a started task" 2 "$(fm crew "$C" nope --role builder --brief x >/dev/null 2>&1; echo $?)"
 check "crew: a reader runs in the repo on the fast model" 1 "$(fm crew "$C" look --role reader --brief x 2>&1 | grep -c 'MODEL=gemini-3.8-flash-low')"
 printf '[{"task":"b1","role":"builder","brief":"SLEEP:1200 one"},{"task":"b2","role":"builder","brief":"SLEEP:1200 two"}]' > "$T/batch.json"
-S0=$(node -e 'console.log(Date.now())'); BO=$(fm crew "$C" --batch "$T/batch.json" 2>&1); S1=$(node -e 'console.log(Date.now())')
-check "crew --batch runs the crew in parallel" yes "$([ $((S1 - S0)) -lt 2300 ] && echo yes || echo "no ($((S1 - S0)) ms)")"
+# each builder sleeps 1.2 s: in parallel they finish together, one after the other they finish 1.2 s apart
+# (finish times, not the wall time, so a slow runner does not fail the check)
+BO=$(FAKE_AGY_LOG="$T/par.log" fm crew "$C" --batch "$T/batch.json" 2>&1)
+GAP=$(node -e 'const t=require("fs").readFileSync(process.argv[1],"utf8").trim().split("\n").map((l)=>Number(l.split(" ")[0]));console.log(t.length===2?Math.abs(t[0]-t[1]):-1)' "$T/par.log")
+check "crew --batch runs the crew in parallel" yes "$([ "$GAP" -ge 0 ] && [ "$GAP" -lt 700 ] && echo yes || echo "no (finish gap $GAP ms)")"
 check "crew --batch reports every member" 2 "$(grep -c 'ROLE=builder' <<< "$BO")"
 printf '[{"task":"b1","role":"builder","brief":"x"},{"task":"b1","role":"builder","brief":"y"}]' > "$T/batch2.json"
 check "crew --batch refuses two builders in one task" 2 "$(fm crew "$C" --batch "$T/batch2.json" >/dev/null 2>&1; echo $?)"
