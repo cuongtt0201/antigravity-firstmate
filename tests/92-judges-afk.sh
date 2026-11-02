@@ -30,7 +30,7 @@ check "judges: each judge gets its own prompt file when the prompt is long" 2 "$
 
 echo "-- the queue and the afk runner"
 A="$T/afk"; mkdir -p "$A"; (cd "$A" && git init -q -b main && echo a > a.txt && git add -A && git -c user.name=t -c user.email=t@t commit -qm i && git checkout -qb work)
-AP=$(cd "$A" && pwd -P)
+AP=$(cd "$A" && pwd -P); [ -n "$WIN" ] && AP=$(cygpath -m "$AP")
 fm init "$A" >/dev/null
 check "afk: nothing queued is not an error" 0 "$(fm afk "$A" >/dev/null 2>&1; echo $?)"
 fm queue "$A" add "Add a --json flag" "Fix the unicode slug" >/dev/null
@@ -50,7 +50,7 @@ arg() { node -e 'const ls=require("fs").readFileSync(process.argv[1],"utf8").tri
 check "afk: one first-mate chat per item" 2 "$(grep -c '"--agent","firstmate"' "$FAKE_AGY_ARGS")"
 check "afk: items run in queue order" "true true" "$(arg 0 'v("-p").includes("--json flag")') $(arg 1 'v("-p").includes("unicode slug")')"
 check "afk: each chat is told it runs unattended" "true true" "$(arg 0 'v("-p").includes("unattended")') $(arg 1 'v("-p").includes("unattended")')"
-check "afk: the first mate runs on Flash" 1 "$(arg 0 '/flash/.test(v("--model"))' | grep -c true)"
+check "afk: the first mate runs on Flash" 1 "$(arg 0 'v("--model").includes("flash")' | grep -c true)"
 check "afk: session grants for fm.js, the brief folder and the task workspaces" "true true true" "$(arg 0 'const s=JSON.parse(v("--settings")).permissions.allow;[s.some(x=>/^command\(node .*\/fm\.js\)$/.test(x)),s.includes("write_file('"$AP"'/.firstmate/briefs)"),s.includes("read_file('"$FM_WT_ROOT"')")].join(" ")')"
 fm queue "$A" add "break FAIL_IF_MODEL:flash" "after the failure" >/dev/null
 check "afk: a failed item exits 1 and the next item still runs" "1 1 3" "$(fm afk "$A" >/dev/null 2>&1; echo $?) $(fm queue "$A" | grep -c ' failed ') $(fm queue "$A" | grep -c ' done ')"

@@ -1123,7 +1123,8 @@ function main(argv) {
       if (rest.length >= 2) { setRepoConfig(r, rest[0], rest.slice(1).join(' ')); return out(show(getKey(loadConfig(r), rest[0]))); }
       return out(rest.length ? show(getKey(loadConfig(r), rest[0])) : JSON.stringify(loadConfig(r), null, 2));
     }
-    case 'path': { const r = needRepo(arg); taskName(rest[0]); return out(taskDir(r, rest[0])); }
+    // forward slashes on Windows too, so the path goes into a brief or a JSON argument as it is
+    case 'path': { const r = needRepo(arg); taskName(rest[0]); return out(taskDir(r, rest[0]).split(path.sep).join('/')); }
     default: return die(`unknown command '${cmd}'`);
   }
 }
