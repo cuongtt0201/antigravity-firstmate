@@ -5,3 +5,7 @@ date	config	task	strong_tokens	total_tokens	wall_min	hidden_pass	captain_interve
 2026-11-02	v1-alpha2-cli (first mate in agy, Flash)	B2	33608	147687	3.2	yes	0	0
 2026-11-02	v1-alpha3-afk (queue, first mate in agy, judges Argon+Claude)	B1	43383	207965	3.3	yes	0	0
 2026-11-02	v1-alpha3-afk (queue, first mate in agy, judges Argon+Claude)	B2	37028	188214	2.6	yes	0	0
+2026-11-02	v1-alpha6-afk (fm.js run; judge Claude only, Argon out of quota)	B1	47729	255707	4.0	yes	0	0
+2026-11-02	v1-alpha6-afk (fm.js run; judge Claude only, Argon out of quota)	B2	20258	175121	3.1	yes	0	0
+2026-11-02	v1-alpha7-afk (first mate plans, runner runs; judge Claude only)	B1	27234	113322	2.3	yes	0	0
+2026-11-02	v1-alpha7-afk then alpha8 re-judge (judge gave no verdict on alpha7)	B2	40510	147260	2.4	yes	1	0

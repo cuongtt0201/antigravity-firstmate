@@ -92,6 +92,28 @@ errors and 0 refused tools, made one crew call each and never looked up fm.js us
 `fm.js report` gives the same 20% for the crew with cached input included. A second family costs about as much as
 Argon on these small tasks; it buys a vote that does not share Gemini's blind spots.
 
+## alpha.6 to alpha.8: fewer first-mate calls (2026-11-02)
+
+The same queue (B1, B2, verbatim) through `fm.js afk` on fresh copies of the fixture. Argon had no quota all day,
+so Claude Sonnet judged alone (the verdicts say so).
+
+| First mate, per item | alpha.3 | alpha.6: `fm.js run` | alpha.7: plans only, the runner runs the batch |
+|---|---|---|---|
+| model calls | 18 | 13 / 15 | **5 / 11** |
+| new tokens | 87k / 86k | 91k / 85k | **30k / 49k** |
+| read from the cache | 336k / 312k | 200k / 270k | **66k / 186k** |
+| wall time | 198 s / 158 s | 238 s / 185 s | **138 s / 144 s** |
+
+- alpha.6 put the deterministic loop (builder, gate, fix rounds, judges, deliver) into one command. Calls fell, but
+  new tokens did not: `fm.js run` takes minutes, the CLI moved it to the background, and the first mate woke with its
+  prompt cache expired and reread 24–27k tokens, then re-read files to check.
+- alpha.7: in afk the first mate only writes the batch and ends; the runner runs it. In B1 the judge asked for changes
+  and `fm.js run` sent its fixes back to the builder by itself (alpha.6); both hidden tests pass in every run.
+- Found on the way (alpha.8): the Claude judge, alone, tried to run `tail` and `node` to check the change; a headless
+  run ends on a command it may not run, so B2 came back HUMAN. judge.md now says judges cannot run commands, and a
+  judge that ends without a verdict runs once more with a reminder. Re-judged on alpha.8: APPROVE in 15 s, delivered,
+  hidden test B2 passes.
+
 ## Benchmark tasks
 
 See `bench/README.md`. Results go to `bench/results.tsv`.
