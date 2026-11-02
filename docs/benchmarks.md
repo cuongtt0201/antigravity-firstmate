@@ -68,6 +68,30 @@ ended right after delivery on a refused `npm test` on the captain's tree, which 
 (67k cached), judge 19.1k (14.5k cached); `fm.js report` gives the strong model 22% of the crew's tokens. On a task this
 small the judge's fixed ~19k is most of it; over the whole run (first mate and crew, new tokens) Argon used 12%.
 
+## v1.0.0-alpha.3: /afk on a queue of B1 and B2, two judge families (2026-11-02)
+
+A fresh copy of `bench/fixture` on branch `work`, merge mode `commit`. The B1 and B2 prompts were queued verbatim
+(`fm.js queue add`) and `fm.js afk` ran them with nobody watching: one new first-mate chat per item (Flash medium),
+the judges Argon and Claude Sonnet in parallel.
+
+| Item | Wall | Result |
+|---|---|---|
+| #1 B1 (Vietnamese slugs) | 198 s | builder PASS on the first try, Argon APPROVE, Claude APPROVE, commit `vietnamese-slugify`; **hidden test B1 passes** |
+| #2 B2 (`--json` flag) | 158 s | builder PASS on the first try, Argon APPROVE, Claude APPROVE, commit `cli-json`; **hidden test B2 passes** |
+
+The whole queue took 5 min 57 s and left two commits on `work`, a clean tree and `npm test` ok. Both chats ran with 0
+errors and 0 refused tools, made one crew call each and never looked up fm.js usage.
+
+| Tokens (new, not cached) | |
+|---|---|
+| first mate, 2 chats | 173k (648k more read from the cache) |
+| builders | 143k |
+| judges: Argon 34k, Claude 46k | 80k |
+| strong models over the whole run | **20%** (Argon alone 9%) |
+
+`fm.js report` gives the same 20% for the crew with cached input included. A second family costs about as much as
+Argon on these small tasks; it buys a vote that does not share Gemini's blind spots.
+
 ## Benchmark tasks
 
 See `bench/README.md`. Results go to `bench/results.tsv`.

@@ -3,3 +3,5 @@ date	config	task	strong_tokens	total_tokens	wall_min	hidden_pass	captain_interve
 2026-11-01	v1-alpha1-cli (first mate in agy, Flash)	B6	0	28419	0.5	n/a	0	0
 2026-11-01	v1-alpha1-cli (first mate in agy, Flash)	B2	34028	197425	4.6	yes	0	0
 2026-11-02	v1-alpha2-cli (first mate in agy, Flash)	B2	33608	147687	3.2	yes	0	0
+2026-11-02	v1-alpha3-afk (queue, first mate in agy, judges Argon+Claude)	B1	43383	207965	3.3	yes	0	0
+2026-11-02	v1-alpha3-afk (queue, first mate in agy, judges Argon+Claude)	B2	37028	188214	2.6	yes	0	0
