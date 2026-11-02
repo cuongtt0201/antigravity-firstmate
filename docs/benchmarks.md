@@ -61,6 +61,13 @@ fixed in alpha.2:
 5. `--mode auto` is not available on every account ("continuing in the default mode"). Readers and the judge now run
    in the default mode without the flag.
 
+**alpha.2, same B2 run (2026-11-02)**, with only three session grants (fm.js, the brief folder, `~/.firstmate/wt`):
+start → crew (waited, no cancel, no probe builder, no in-chat builder) → `fm.js review` → judge APPROVE → deliver, in
+3 min 13 s; **hidden test B2 passes**. The first mate used 97.5k tokens (378k cached), about half of alpha.1. The run
+ended right after delivery on a refused `npm test` on the captain's tree, which was not granted. Crew: builder 47k
+(67k cached), judge 19.1k (14.5k cached); `fm.js report` gives the strong model 22% of the crew's tokens. On a task this
+small the judge's fixed ~19k is most of it; over the whole run (first mate and crew, new tokens) Argon used 12%.
+
 ## Benchmark tasks
 
 See `bench/README.md`. Results go to `bench/results.tsv`.
