@@ -3,6 +3,8 @@
 //   npx github:<owner>/antigravity-firstmate              install or update
 //   npx github:<owner>/antigravity-firstmate --uninstall  remove
 //   npx github:<owner>/antigravity-firstmate --check      report what this machine has and lacks; installs nothing
+//   npx github:<owner>/antigravity-firstmate --grant      let the first mate run fm.js and read task workspaces
+//                                                         without asking (Antigravity's global permission grants)
 // No dependencies. Re-running replaces the installed copy (the old one is backed up).
 
 const fs = require('fs');
@@ -53,6 +55,29 @@ function editConfig(fn) {
   fn(cfg);
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
   fs.writeFileSync(CONFIG, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 });
+}
+
+// The permissions the first mate needs so Antigravity does not stop to ask before each step (the headless CLI
+// cannot ask at all, so it refuses): running fm.js and reading the task workspaces outside the repo. Added only
+// with --grant; uninstall takes back exactly these.
+function grants() {
+  const slash = (p) => p.split(path.sep).join('/');
+  return [`command(node ${slash(TARGET)}/scripts/fm.js)`, `read_file(${slash(require('./plugin/scripts/fm-paths.js').wtRoot())})`];
+}
+function grantedAll() {
+  try { const allow = JSON.parse(fs.readFileSync(CONFIG, 'utf8')).userSettings.globalPermissionGrants.allow; return grants().every((g) => allow.includes(g)); } catch { return false; }
+}
+
+function grant() {
+  editConfig((cfg) => {
+    const us = (cfg.userSettings = cfg.userSettings || {});
+    const g = (us.globalPermissionGrants = us.globalPermissionGrants || {});
+    g.allow = Array.isArray(g.allow) ? g.allow : [];
+    for (const x of grants()) if (!g.allow.includes(x)) g.allow.push(x);
+  });
+  log(`granted in ${CONFIG}:`);
+  for (const x of grants()) log(`  ${x}`);
+  log('the guard still checks every command; uninstall takes these back');
 }
 
 const WIN = process.platform === 'win32';
@@ -111,6 +136,7 @@ function install() {
   log('next: restart Antigravity (IDE or App). In the IDE, type /firstmate in a chat; in the App, RE-SELECT the');
   log('      firstmate agent (pick another agent, then firstmate again): the App keeps a snapshot of the selected');
   log("      agent's prompt until you re-select it. The crew runs through agy (check: node install.js --check).");
+  if (!grantedAll()) log('      To let the first mate run fm.js and read task workspaces without asking each time, run this again with --grant.');
 }
 
 // What the plugin needs, checked without changing anything. Exit code 1 when something required is missing.
@@ -153,6 +179,7 @@ function check() {
   let enabled = false;
   try { enabled = !!JSON.parse(fs.readFileSync(CONFIG, 'utf8')).plugins[NAME].enabled; } catch {}
   add('NOTE', 'enabled in config.json', String(enabled));
+  add('NOTE', 'crew permissions', grantedAll() ? 'granted: fm.js runs and task workspaces are read without asking' : 'not set: Antigravity asks before each fm.js call (the headless CLI refuses); add them with --grant');
 
   console.log(`[firstmate] check (installs nothing), this package: v${JSON.parse(fs.readFileSync(path.join(SOURCE, 'plugin.json'), 'utf8')).version}`);
   console.log(rows.join('\n'));
@@ -169,14 +196,19 @@ function uninstall() {
     log('plugin folder not found, nothing to remove');
   }
   if (fs.existsSync(CONFIG)) {
-    editConfig((cfg) => { if (cfg.plugins) delete cfg.plugins[NAME]; });
-    log('removed the plugin entry from config.json');
+    editConfig((cfg) => {
+      if (cfg.plugins) delete cfg.plugins[NAME];
+      const g = cfg.userSettings && cfg.userSettings.globalPermissionGrants;
+      if (g && Array.isArray(g.allow)) g.allow = g.allow.filter((x) => !grants().includes(x));
+    });
+    log('removed the plugin entry and its permission grants from config.json');
   }
 }
 
 try {
   if (process.argv.includes('--check')) check();
   else if (process.argv.includes('--uninstall')) uninstall();
+  else if (process.argv.includes('--grant')) grant();
   else install();
 } catch (e) {
   console.error(`[firstmate] ERROR: ${e.message}`);

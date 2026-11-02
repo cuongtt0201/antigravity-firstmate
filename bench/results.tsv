@@ -1,2 +1,4 @@
 date	config	task	strong_tokens	total_tokens	wall_min	hidden_pass	captain_interventions	undo
 2026-11-01	v1-alpha1-cli (hand-driven)	B1-like	69497	534730	~6	yes	0	0
+2026-11-01	v1-alpha1-cli (first mate in agy, Flash)	B6	0	28419	0.5	n/a	0	0
+2026-11-01	v1-alpha1-cli (first mate in agy, Flash)	B2	34028	197425	4.6	yes	0	0

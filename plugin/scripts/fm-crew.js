@@ -104,8 +104,9 @@ function runOne(r, m, cfg) {
   const agy = agyPath();
   const timeout = (Number(cfg.crewTimeoutSec) || 1800);
   // Builders may edit files (accept-edits: the CLI approves edits, every shell command still needs its approval);
-  // readers and the judge only read (auto). The workspace is added so edits there count as inside the project.
-  const mode = m.role === 'builder' ? ['--mode', 'accept-edits', '--add-dir', m.cwd] : ['--mode', 'auto'];
+  // readers and the judge only read, in the CLI's default mode (`auto` is not available on every account). The
+  // workspace is added so edits there count as inside the project.
+  const mode = m.role === 'builder' ? ['--mode', 'accept-edits', '--add-dir', m.cwd] : [];
   const args = ['-p', m.prompt, '--model', m.model.id, '--output-format', 'json', ...mode, '--print-timeout', `${timeout}s`];
   const [cmd, argv] = agy.endsWith('.js') ? [process.execPath, [agy, ...args]] : [agy, args];
   const env = { ...process.env, FM_ROLE: m.role, FM_TASK: m.task, FM_REPO: r };
@@ -144,8 +145,16 @@ function record(r, res) {
   return { file, usage: u };
 }
 
-// Runs the crew; resolves to the list of results. Refusals throw CrewError before anything starts.
-async function crew(r, specs) {
+// What the caller prints once the crew passed every check: a crew run takes minutes, and an agent whose command
+// went to the background must know it is running, not hung.
+function startLine(members) {
+  const who = members.map((m) => `${m.role} ${m.task} (${m.model.id})`).join(', ');
+  return `[fm] crew started: ${who} via ${agyPath()}. A run takes minutes: wait for this command to finish (if it moves to the background, wait for its completion); do not cancel it or start it again.`;
+}
+
+// Runs the crew; resolves to the list of results. Refusals throw CrewError before anything starts; onStart(members)
+// is called once nothing can refuse any more.
+async function crew(r, specs, { onStart } = {}) {
   const cfg = loadConfig(r);
   if (specs.length > (Number(cfg.caps.perCall) || 6)) throw new CrewError(`${specs.length} crew members in one call; the cap is ${cfg.caps.perCall}`);
   const builders = specs.filter((s) => s.role === 'builder').map((s) => s.task);
@@ -161,6 +170,7 @@ async function crew(r, specs) {
     const want = members.filter((m) => ROLES[m.role].cap === capKey).length;
     if (want && usedToday(r, capKey) + want > (Number(cfg.caps[capKey]) || 0)) throw new CrewError(`the daily cap ${capKey}=${cfg.caps[capKey]} would be passed (${usedToday(r, capKey)} used today): ask the captain; only they can raise it`);
   }
+  if (onStart) onStart(members);
   const results = await Promise.all(members.map((m) => runOne(r, m, cfg)));
   return results.map((res) => ({ ...res, ...record(r, res) }));
 }
@@ -173,4 +183,4 @@ function format(res) {
   return `${head}\n${body}`;
 }
 
-module.exports = { crew, format, CrewError, ROLES, agyPath, prepare };
+module.exports = { crew, format, startLine, CrewError, ROLES, agyPath, prepare };

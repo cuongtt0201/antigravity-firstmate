@@ -20,7 +20,7 @@
 npx -y github:cuongtt0201/antigravity-firstmate
 ```
 
-> **v1.0.0-alpha.1.** This is the first version built for the Antigravity IDE. See [What changed in v1](#what-changed-in-v1).
+> **v1.0.0-alpha.2.** This is the first version built for the Antigravity IDE. See [What changed in v1](#what-changed-in-v1).
 
 ---
 
@@ -101,7 +101,8 @@ The guard hook runs on every tool call of the first mate and the crew, in the ID
   - no package installs over the `node_modules` a workspace borrows from your checkout.
 - **DevOps pack** (on by default, off with `fm.js config <repo> packs '["core"]'`): reads only for `kubectl`, `helm`, `terraform`, `gcloud`, `gsutil`; `ssh` asks.
 - **Roles hold.** Readers and the judge cannot write. Builders cannot touch locked tests, gate results, notes, facts, settings or verdicts. Only the first mate decides, merges and starts more crew.
-- **Crew permissions stay narrow.** Builders run in the CLI's `accept-edits` mode: file edits inside their workspace are approved, and shell commands are not. Readers and the judge run in `auto` mode.
+- **Crew permissions stay narrow.** Builders run in the CLI's `accept-edits` mode: file edits inside their workspace are approved, and shell commands are not. Readers and the judge run in the CLI's default mode and only read.
+- **Task work goes through `fm.js crew`.** An in-chat builder briefed on a task workspace is refused, so every builder's work is recorded, saved and gated by code. In-chat builders remain for `/best` drafts.
 
 The guard reads command text, so it is a safety net, not a sandbox.
 
@@ -123,6 +124,13 @@ To check what your machine has without installing anything, add `--check`. Then:
 1. **Restart Antigravity.** **Firstmate Crew** appears under Customizations → Plugins.
 2. **IDE:** type `/firstmate` at the start of a chat. **App:** pick the **firstmate** agent; after every update re-select it (pick another agent, then firstmate), because the App keeps a snapshot of the selected agent.
 3. **Once per repo**, the first mate runs `fm.js init` and `fm.js detect --write`, so your tests and linters become part of every gate. Choose how merges land with `fm.js config <repo> merge commit` (or `apply` / `propose`).
+4. **Optional: let the first mate work without asking at every step.** Antigravity asks before each `fm.js` command and before reading the task workspaces in `~/.firstmate/wt`, which lie outside your repo; the headless CLI cannot ask, so it refuses. This adds exactly those two grants to Antigravity's global permissions (`--uninstall` takes them back):
+
+   ```bash
+   npx -y github:cuongtt0201/antigravity-firstmate --grant
+   ```
+
+   The guard still checks every command. To run the first mate headless once without the grants, pass them for that session only: `agy -p "<task>" --agent firstmate --settings '{"permissions":{"allow":["command(node <plugin>/scripts/fm.js)","read_file(<home>/.firstmate/wt)","write_file(<repo>/.firstmate/briefs)"]}}'` (`<plugin>` is `~/.gemini/config/plugins/flash-ultra`, written out in full).
 
 To remove it:
 
@@ -147,7 +155,8 @@ Tasks started under v0.12 inside the repo still work. `fm.js clean <repo> --lega
 
 ## Known limitations
 
-- **Alpha.** The full flow ran end to end on a real task (see benchmarks). Larger runs are still to come.
+- **Alpha.** The full flow ran end to end on real tasks, driven by hand and by the first mate itself in the CLI (see benchmarks). Larger runs are still to come.
+- Without `--grant`, the headless CLI refuses the first mate's first `fm.js` command (see Install, step 4).
 - In the IDE, the plugin's `SessionStart` and `PreInvocation` hooks are not confirmed yet. The guard runs. `tools/probe/` and [docs/ide-capabilities.md](docs/ide-capabilities.md) describe how to check the rest.
 - Headless crew runs end when the CLI refuses a command, so builders edit with file tools only and fm.js runs the checks after them.
 - The judge and the crew are all Gemini unless you set `models.second` (a model of another family) and call `fm.js judge --model second`.

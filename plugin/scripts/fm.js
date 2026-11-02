@@ -787,14 +787,14 @@ async function judgeCmd(repoArg, t, rest) {
   const r = needRepo(repoArg); taskName(t);
   const mi = rest.indexOf('--model');
   const text = dossier(r, t);
-  const { crew, format, CrewError } = require('./fm-crew.js');
+  const { crew, format, startLine, CrewError } = require('./fm-crew.js');
   let res;
   const rescue = rest.includes('--rescue');
   if (rescue) fs.writeFileSync(path.join(notesDir(r), `${t}.rescued`), `${new Date().toISOString()}\n`);
   const ask = rescue
     ? 'RESCUE: the gate keeps failing for this task, also after several approaches. Diagnose the cause from the GATE lines and the diff, answer VERDICT: REVISE (or HUMAN when the task cannot be done as asked) and give a new approach as numbered FIXES.'
     : 'Judge this task and answer in your verdict format.';
-  try { [res] = await crew(r, [{ task: t, role: 'judge', model: mi >= 0 ? rest[mi + 1] : undefined, brief: `${ask}\n\n${text}` }]); }
+  try { [res] = await crew(r, [{ task: t, role: 'judge', model: mi >= 0 ? rest[mi + 1] : undefined, brief: `${ask}\n\n${text}` }], { onStart: (ms) => out(startLine(ms)) }); }
   catch (e) { if (e instanceof CrewError) die(e.message); throw e; }
   out(format(res));
   if (!res.ok) throw new Exit(1);
@@ -955,7 +955,7 @@ function report(repoArg, args) {
 // ---------- crew: headless agy processes, one per task ----------
 async function crewCmd(repoArg, rest) {
   const r = needRepo(repoArg);
-  const { crew, format, CrewError } = require('./fm-crew.js');
+  const { crew, format, startLine, CrewError } = require('./fm-crew.js');
   let specs;
   const bi = rest.indexOf('--batch');
   if (bi >= 0) {
@@ -972,7 +972,7 @@ async function crewCmd(repoArg, rest) {
     specs = [spec];
   }
   let results;
-  try { results = await crew(r, specs); } catch (e) { if (e instanceof CrewError) die(e.message); throw e; }
+  try { results = await crew(r, specs, { onStart: (ms) => out(startLine(ms)) }); } catch (e) { if (e instanceof CrewError) die(e.message); throw e; }
   let failed = results.some((x) => !x.ok);
   for (const res of results) {
     out(format(res));

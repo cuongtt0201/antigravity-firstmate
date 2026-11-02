@@ -19,7 +19,7 @@ the plan) before they are relied on.
 ## Antigravity CLI (`agy`)
 
 - Installed at `~/.gemini/bin/agy`, version 1.4.12.
-- Headless mode: `agy -p "<prompt>" --model <id> --output-format json [--mode auto] [--add-dir <dir>] [--print-timeout 600s]`.
+- Headless mode: `agy -p "<prompt>" --model <id> --output-format json [--mode auto] [--add-dir <dir>] [--print-timeout 600s]`. `auto` is not available on every account (the CLI warns and continues in the default mode), so the crew passes no mode for readers and the judge.
   It returns `{"conversation_id","status","response","duration_seconds","num_turns","usage":{input_tokens,output_tokens,thinking_tokens,cache_read_tokens,total_tokens}}`.
 - One run (`gemini-3.8-flash-low`, "Reply with the single word OK") took 5.1 s and 15,264 input tokens. That is the fixed cost of one crew call (system prompt, plugins, skills), measured.
 - `agy agents` lists the main agents of installed plugins (`firstmate`). `agy plugin list` reads `~/.gemini/config/plugins`.

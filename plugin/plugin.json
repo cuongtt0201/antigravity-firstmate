@@ -1,7 +1,7 @@
 {
   "name": "flash-ultra",
   "displayName": "Firstmate Crew",
-  "version": "1.0.0-alpha.1",
+  "version": "1.0.0-alpha.2",
   "description": "A first mate on a cheap model runs a Flash crew in parallel (fm.js crew, one workspace per task), code gates every change, a strong judge reviews only what the risk calls for, and what passes is merged with an undo; high risk waits for you. Works in the Antigravity IDE, the App and the CLI. Blocks pushes, publishing, secrets and live-system changes.",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [

@@ -34,6 +34,33 @@ in the order the first mate follows. Every model call was real (`agy` 1.4.12).
 `fm.js report`: crew tokens 534,730, of which the strong model used 69,497 (**12%**). The three wasted builder runs are
 included. The v0.12 chat measured above had a strong-model share of 44–57%. The target for v1 is 20% or less.
 
+## v1.0.0-alpha.1: the first mate itself, driven through the CLI (2026-11-01)
+
+The installed plugin, run as `agy -p "<task prompt>" --agent firstmate --model gemini-3.8-flash-medium`, on fresh
+copies of `bench/fixture`. Nobody touched the run; the hidden tests were run afterwards.
+
+| Task | Result |
+|---|---|
+| B6 (a question) | Right answer with `file:line`, 26 s, 0 strong-model calls |
+| B2 (`--json` flag) | 4 min 35 s: start → builder → gate PASS → judge APPROVE → deliver (uncommitted); **hidden test B2 passes** |
+
+B2 crew: builder 66k tokens (97k more cached), judge 19.5k (14.5k cached); `fm.js report` gives the strong model
+**17%** of the crew's tokens, cached input included. The first mate on Flash used 184k tokens and read 1.3M from the
+cache, most of it on a detour that the run exposed. That run, and three that stopped earlier, found five problems,
+fixed in alpha.2:
+
+1. `fm.js crew` takes minutes, so the CLI moved it to the background and its log was empty. The first mate took that
+   for a missing `agy`, cancelled the run and started a builder with the brief "test" to try the command. The crew now
+   prints `crew started … via <agy>; do not cancel it` before it starts, and the prompt says to wait.
+2. It then fell back to an in-chat `builder` subagent, which read the files and reported PASS without editing. The
+   guard now sends an in-chat builder briefed on a task workspace to `fm.js crew` (in-chat builders stay for /best).
+3. The budget's hard stop at 15 still sent the first mate to v0.12 "explorer" subagents. It now points to readers in
+   one `fm.js crew --batch` call.
+4. With no grants, the headless CLI refuses every `fm.js` command, the brief file and reads of `~/.firstmate/wt`; the
+   IDE and the App ask each time. `install.js --grant` adds the two global grants (fm.js, task workspaces).
+5. `--mode auto` is not available on every account ("continuing in the default mode"). Readers and the judge now run
+   in the default mode without the flag.
+
 ## Benchmark tasks
 
 See `bench/README.md`. Results go to `bench/results.tsv`.

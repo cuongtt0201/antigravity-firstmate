@@ -134,6 +134,13 @@ function workspaceKey(prompt) {
   return (REPO_KEY_RE.test(m[1]) && m[2] ? `${m[1]}/${m[2]}` : m[1]).toLowerCase();
 }
 
+// True when an in-chat builder is briefed on a task workspace. Task work goes through fm.js crew; in-chat
+// builders stay for /best drafts in the repo.
+function inChatTaskBuilder(args) {
+  const subs = Array.isArray(args.Subagents) ? args.Subagents : [args];
+  return subs.some((s) => s && String(s.TypeName) === 'builder' && workspaceKey(s.Prompt || s.prompt));
+}
+
 // The task workspace two or more parallel workers in one invoke_subagent call would share, or ''.
 function sharedTask(args) {
   if (!Array.isArray(args.Subagents)) return '';
@@ -241,6 +248,8 @@ function main() {
     const n = Array.isArray(args.Subagents) ? args.Subagents.length : 1;
     if (st.subagents + n > MAX_SUBAGENTS) {
       decision = { decision: 'deny', reason: `[guard] This chat already launched ${st.subagents} subagents (cap ${MAX_SUBAGENTS} per day). Report what you have to the captain and ask before launching more.` };
+    } else if (inChatTaskBuilder(args)) {
+      decision = { decision: 'deny', reason: `[guard] Work on a task runs through fm.js crew, not an in-chat builder: it records the builder's tokens, then saves and gates its work. Write the brief and run fm.js crew <repo> --batch <file> (or --role builder --brief "..."); it takes minutes, so wait for it to finish.` };
     } else if (sharedTask(args)) {
       decision = { decision: 'deny', reason: `[guard] Two or more workers in this call share the task workspace ${sharedTask(args)}. Give each independent part its own task (fm.js start <repo> <task> once per part), then send one worker per task.` };
     } else {
@@ -275,7 +284,7 @@ function main() {
       ? (rest.replace(/[&;|\s]+/g, '') && !freePath(rest) ? 1 : 0)
       : (freePath(target || JSON.stringify(args)) ? 0 : 1);
     if (cost > 0 && spendBudget(convoId, cost) > HARD_MAX) {
-      decision = { decision: 'deny', reason: `[firstmate budget] ${HARD_MAX} direct reads/commands for one captain message is the hard stop. Send the rest to explorer subagents (one invoke_subagent call, TypeName "explorer", each with one angle), or answer with what you have and list what is not verified.` };
+      decision = { decision: 'deny', reason: `[firstmate budget] ${HARD_MAX} direct reads/commands for one captain message is the hard stop. fm.js commands stay free: send further reading to readers (one fm.js crew --batch call, one angle each), or answer with what you have and list what is not verified.` };
     }
   }
 
@@ -287,7 +296,7 @@ function main() {
       try { fs.appendFileSync(path.join(STATE_DIR, 'mcp.log'), `${new Date().toISOString()} ${convo} ${agent || '-'} ${tool} ${t.name || '?'} keys=${Object.keys(args).join(',')}\n`); } catch {}
       // the first mate's MCP reads count toward its budget like any other read
       if (agent === 'firstmate' && mcpKind(t.name) === 'read' && spendBudget(convoId, 1) > HARD_MAX) {
-        decision = { decision: 'deny', reason: `[firstmate budget] ${HARD_MAX} direct reads/commands for one captain message is the hard stop. Send MCP reading to explorer subagents too.` };
+        decision = { decision: 'deny', reason: `[firstmate budget] ${HARD_MAX} direct reads/commands for one captain message is the hard stop. Answer with what you have and list what is not verified.` };
       }
     }
     const m = decision.decision === 'allow' ? mcpPolicy(tool, args, agent) : null;
