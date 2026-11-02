@@ -39,7 +39,8 @@ const onlyFor = (k) => { const s = (prompt.match(new RegExp(`${k}:(\\S+)`)) || [
 const sleep = Number((prompt.match(/SLEEP:(\d+)/) || [])[1] || 0);
 const finish = () => {
   const m = prompt.match(/WRITE_FILE:([\w.-]+)/);
-  if (m) fs.writeFileSync(m[1], 'written by fake agy\n');
+  // FIXED_IN_ROUND2: the first round writes the file badly (invalid JSON), a fix round writes it right
+  if (m) fs.writeFileSync(m[1], prompt.includes('FIXED_IN_ROUND2') && prompt.includes('FIX ROUND') ? '{}\n' : 'written by fake agy\n');
   if (process.env.FAKE_AGY_LOG) fs.appendFileSync(process.env.FAKE_AGY_LOG, `${Date.now()} ${process.env.FM_ROLE || '-'} ${model}\n`);
   const judge = /VERDICT:/.test(prompt) && process.env.FM_ROLE === 'judge';
   if (process.env.FAKE_AGY_ECHO) { process.stdout.write(JSON.stringify({ conversation_id: 'echo', status: 'SUCCESS', response: prompt, usage: {} })); return; }

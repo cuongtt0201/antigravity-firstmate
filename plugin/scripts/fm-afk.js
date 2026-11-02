@@ -81,7 +81,7 @@ function checkReady(r, cfg) {
 
 function matePrompt(item) {
   return [
-    `You are running unattended: the captain is away (fm.js afk, queue item #${item.id}). Do the request below the usual way: tasks, crew, ladder, judge, deliver.`,
+    `You are running unattended: the captain is away (fm.js afk, queue item #${item.id}). Do the request below the usual way: brief the tasks and run them with one fm.js run --batch call.`,
     '- Do not ask questions. When the request has two readings, take the narrower one and say so in your report.',
     '- Run only fm.js commands: the gate already runs the project\'s checks.',
     '- High risk stays for the captain: when fm.js deliver stops with exit 3, leave that task and say so.',

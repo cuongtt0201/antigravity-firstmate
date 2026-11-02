@@ -20,7 +20,7 @@
 npx -y github:cuongtt0201/antigravity-firstmate
 ```
 
-> **v1.0.0-alpha.5.** This is the first version built for the Antigravity IDE. See [What changed in v1](#what-changed-in-v1).
+> **v1.0.0-alpha.6.** This is the first version built for the Antigravity IDE. See [What changed in v1](#what-changed-in-v1).
 
 ---
 
@@ -71,7 +71,7 @@ A change, as the first mate runs it:
 
 1. **Tasks.** One task per independent part, so they run in parallel and merge cleanly: `fm.js start <repo> <task> --request "<your words>"`.
 2. **Acceptance tests first** for medium- or high-risk work. A builder in the tester role writes them, `fm.js lock` freezes them, and the crew can no longer change them (the gate fails and the guard refuses).
-3. **Crew.** `fm.js crew <repo> --batch <file>` starts every builder at once as a headless `agy` process in its own workspace. When a builder stops, fm.js records its work and runs the gate.
+3. **Crew.** `fm.js run <repo> --batch <file>` starts every task's builder at once as a headless `agy` process in its own workspace, and drives each task through steps 3 to 6 by itself: when a builder stops, fm.js records its work and runs the gate, sends failing lines (or the judges' fixes) back to the builder, asks the judges and delivers. The first mate makes one call for the whole change.
 4. **Ladder.** `fm.js ladder <repo> <task>` reads the task's record and says what comes next: `fix` (send the failing lines back), `arena 3`, `judge`, `deliver`, or `ask captain`.
 5. **Judges.** `fm.js judge` runs Argon and Claude in parallel on the task's dossier: request, done-when, risk, locked tests, gate lines, the diff with every unchanged caller. Each returns APPROVE, REVISE, REJECT or HUMAN; the most cautious one counts, and a disagreement is reported. If a judge fails, the verdict is HUMAN. `fm.js config <repo> judges '["strong"]'` keeps one judge.
 6. **Deliver.** `fm.js deliver` merges the task the way the repo is set: `propose`, `apply` (uncommitted) or `commit` (one commit per task, trailer `Firstmate-Task:`). High risk stops with exit 3 until you say yes.

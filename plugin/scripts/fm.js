@@ -56,7 +56,9 @@ const DEP_NAMES = new Set(['node_modules', '.venv', 'venv', 'vendor', '.env', '.
 try { fs.accessSync(path.join(os.homedir(), '.gitconfig'), fs.constants.R_OK); } catch { if (fs.existsSync(path.join(os.homedir(), '.gitconfig'))) process.env.GIT_CONFIG_GLOBAL = os.platform() === 'win32' ? 'NUL' : '/dev/null'; }
 
 class Exit extends Error { constructor(code) { super(`exit ${code}`); this.code = code; } }
-const out = (s) => process.stdout.write(s.endsWith('\n') ? s : `${s}\n`);
+// fm.js run keeps the commands it calls quiet (quiet > 0) and prints one short line per step instead.
+let quiet = 0;
+const out = (s) => { if (!quiet) process.stdout.write(s.endsWith('\n') ? s : `${s}\n`); };
 function die(msg) { process.stderr.write(`[fm] ERROR: ${msg}\n`); throw new Exit(2); }
 
 // git <args> in <cwd>; returns { ok, out } (stdout trimmed of the final newline, stderr on failure)
@@ -850,11 +852,17 @@ function judgeQuotaUntil(r, t) {
 
 // ---------- ladder: the next step for a task, decided by code from its record ----------
 function ladder(r, t) {
+  const [step, why] = nextStep(r, t);
+  out(`NEXT: ${step}`); out(`- ${why}`);
+}
+
+// [step, why]: build, gate, fix, judge, deliver, arena 3, judge rescue, wait for quota or ask captain.
+function nextStep(r, t) {
   const B = `refs/firstmate/${t}/base`; const H = `refs/firstmate/${t}/head`;
   if (!git(r, ['rev-parse', '-q', '--verify', H]).ok) die(`no task '${t}'`);
   const head = gitOut(r, ['rev-parse', H]);
   const tries = readNote(r, `${t}.attempts`).split('\n').filter(Boolean).map((l) => l.split(/\s+/));
-  const say = (step, why) => { out(`NEXT: ${step}`); out(`- ${why}`); };
+  const say = (step, why) => [step, why];
   if (!tries.length) return head === gitOut(r, ['rev-parse', B]) ? say('build', 'no change yet: send a builder (fm.js crew --role builder)') : say('gate', 'saved but never gated: fm.js gate');
   const [lastSha, last] = tries[tries.length - 1];
   if (lastSha !== head) return say('gate', 'changed since the last gate: fm.js gate');
@@ -1034,6 +1042,110 @@ function crewFailed(e) {
   throw e;
 }
 
+// ---------- run: a task's whole loop in one command ----------
+//   fm.js run <repo> <task> --request "<words>" (--brief "<text>" | --brief-file <file>) [--as ..] [--check ..]
+//   fm.js run <repo> --batch <file.json>   [{ "task", "request", "brief" | "briefFile", "as"?, "check"?, "model"? }, ...]
+// Each task: start, builder, save and gate; a failing gate goes back to the builder with its failing lines, a REVISE
+// with the judges' fixes (3 builder rounds at most); medium risk goes to the judges; then deliver. It stops where the
+// ladder needs the first mate or the captain (arena, judge rescue, ask captain, wait for quota) and says NEXT. The tasks
+// of a batch run in parallel. Exit: 0 all delivered, 1 a task stopped, 3 a task waits for the captain, 4 no quota.
+const RUN_ROUNDS = 3;
+const hush = (fn) => { quiet += 1; try { return fn(); } finally { quiet -= 1; } };
+async function hushAsync(fn) { quiet += 1; try { return await fn(); } finally { quiet -= 1; } }
+const exitOf = (e) => { if (e instanceof Exit) return e.code; throw e; };
+
+// What a fix round tells the builder: the judges' reports after a REVISE, else the failing gate lines.
+function fixNotes(r, t, round) {
+  const vd = verdictOf(r, t);
+  const reason = readNote(r, `${t}.verdict`).split('\n')[1] || '';
+  if (vd.v === 'REVISE') {
+    const reports = [...reason.matchAll(/\(report ([^)]+)\)/g)].map((m) => { try { return fs.readFileSync(m[1], 'utf8').trim(); } catch { return ''; } }).filter(Boolean);
+    return `FIX ROUND ${round}: the gate passed, but the judges asked for changes. Make them, keep what already works:\n${reports.join('\n---\n').slice(0, 6000)}`;
+  }
+  const failing = readNote(r, `${t}.gate.log`).split('\n').filter((l) => /^FAIL  |^      /.test(l)).slice(0, 60).join('\n');
+  return `FIX ROUND ${round}: the gate failed on your last change. Fix exactly this, keep what already works:\n${failing.slice(0, 6000)}`;
+}
+
+async function runTask(r, spec, say) {
+  const t = spec.task;
+  const { crew, CrewError, QuotaError } = require('./fm-crew.js');
+  const end = (code, line) => { say(`[fm] run ${t}: ${line}`); return { t, code, line }; };
+  if (!git(r, ['rev-parse', '-q', '--verify', `refs/firstmate/${t}/head`]).ok) hush(() => start(r, t, spec.request ? ['--request', spec.request] : []));
+  let rounds = 0;
+  for (;;) {
+    let [step, why] = nextStep(r, t);
+    // the brief given to run is always built at least once: a task may already hold a tester's locked tests,
+    // which pass the gate on their own and must not be delivered without the code
+    if (rounds === 0 && step !== 'fix') [step, why] = ['build', 'the brief given to fm.js run'];
+    if (step === 'build' || step === 'fix') {
+      if (rounds >= RUN_ROUNDS) return end(1, `stopped, NEXT ${step === 'fix' && verdictOf(r, t).v === 'REVISE' ? 'ask captain' : step}: still not done after ${rounds} builder rounds (${why})`);
+      rounds += 1;
+      const brief = rounds > 1 || step === 'fix' ? `${spec.brief}\n\n${fixNotes(r, t, rounds)}` : spec.brief;
+      say(`[fm] run ${t}: builder round ${rounds}${rounds > 1 ? ' (fix)' : ''}`);
+      let res;
+      try { [res] = await crew(r, [{ ...spec, role: 'builder', brief }]); } catch (e) {
+        if (e instanceof QuotaError) return end(4, `waits for quota: ${e.message}`);
+        if (e instanceof CrewError) return end(1, `stopped: ${e.message}`);
+        throw e;
+      }
+      if (!res.ok) return end(1, `stopped: the builder failed (${String(res.error).split('\n')[0].slice(0, 160)}); its report: ${res.file}`);
+      try { hush(() => save(r, t, `crew: ${String(spec.as || spec.request || t).split('\n')[0].slice(0, 60)}`)); hush(() => gate(r, t, spec.check || '')); } catch (e) { exitOf(e); }
+      say(`[fm] run ${t}: gate ${readNote(r, `${t}.gate`).split(/\s+/)[1] || '?'}`);
+      continue;
+    }
+    if (step === 'gate') { try { hush(() => gate(r, t, spec.check || '')); } catch (e) { exitOf(e); } continue; }
+    if (step === 'judge') {
+      say(`[fm] run ${t}: judges`);
+      let code = 0;
+      try { await hushAsync(() => judgeCmd(r, t, [])); } catch (e) { code = exitOf(e); }
+      const vd = verdictOf(r, t);
+      say(`[fm] run ${t}: verdict ${vd.v || (code === 4 ? 'none (no quota)' : 'none')}`);
+      if (code === 2) return end(1, 'stopped: the judges could not run (fm.js judge says why)');
+      continue;
+    }
+    if (step === 'deliver') {
+      let code = 0;
+      try { hush(() => deliver(r, t, [])); } catch (e) { code = exitOf(e); }
+      if (code === 3) return end(3, 'waits for the captain: proposed (fm.js deliver --approve after they agree)');
+      if (code) return end(1, 'stopped: delivery failed or conflicted (fm.js deliver says why)');
+      const row = readLedger(r).filter((x) => x[1] === t).pop() || [];
+      return end(0, `delivered ${row[2] === 'commit' ? `as commit ${String(row[7]).slice(0, 7)}` : 'as uncommitted changes'} (risk ${row[3] || '?'}, verdict ${row[5] || '-'}, ${rounds} builder round(s)); undo: fm.js undo ${r} ${t}`);
+    }
+    if (step === 'ask captain') return end(3, `waits for the captain: ${why}`);
+    if (step === 'wait for quota') return end(4, `waits for quota: ${why}`);
+    return end(1, `stopped, NEXT ${step}: ${why}`);
+  }
+}
+
+async function runCmd(repoArg, rest) {
+  const r = needRepo(repoArg);
+  let specs;
+  const bi = rest.indexOf('--batch');
+  if (bi >= 0) {
+    try { specs = JSON.parse(fs.readFileSync(path.resolve(rest[bi + 1] || ''), 'utf8')); } catch (e) { die(`cannot read the batch file: ${e.message}`); }
+    if (!Array.isArray(specs) || !specs.length) die('the batch file must hold a non-empty JSON array of { task, request, brief }');
+  } else {
+    const spec = { task: rest[0] };
+    for (let i = 1; i < rest.length; i++) {
+      const k = rest[i]; const v = rest[i + 1];
+      if (['--request', '--brief', '--brief-file', '--as', '--check', '--model', '--skills'].includes(k)) { spec[{ '--brief-file': 'briefFile' }[k] || k.slice(2)] = v; i++; }
+    }
+    specs = [spec];
+  }
+  for (const s of specs) {
+    taskName(s.task);
+    if (s.briefFile) { try { s.brief = fs.readFileSync(path.resolve(r, s.briefFile), 'utf8'); } catch (e) { die(`task '${s.task}': cannot read ${s.briefFile}`); } delete s.briefFile; }
+    if (!String(s.brief || '').trim()) die(`task '${s.task}': a brief is required (--brief or --brief-file)`);
+  }
+  const say = (s) => process.stdout.write(`${s}\n`);
+  say(`[fm] run: ${specs.map((s) => s.task).join(', ')}. Builders and judges take minutes: wait for this command to finish (if it moves to the background, wait for its completion); do not cancel it or start it again.`);
+  const results = await Promise.all(specs.map((s) => runTask(r, s, say)));
+  say(`[fm] run done: ${results.filter((x) => x.code === 0).length} of ${results.length} delivered. Details: fm.js report ${r}`);
+  const codes = results.map((x) => x.code);
+  const code = codes.includes(1) ? 1 : codes.includes(4) ? 4 : codes.includes(3) ? 3 : 0;
+  if (code) throw new Exit(code);
+}
+
 function quotaCmd(repoArg) {
   const q = require('./fm-quota.js');
   q.forget();
@@ -1095,6 +1207,7 @@ function main(argv) {
       return out(`[fm] verdict for task ${rest[0]}: ${rest[1]}`);
     }
     case 'crew': return crewCmd(arg, rest);
+    case 'run': return runCmd(arg, rest);
     case 'queue': return queueCmd(arg, rest);
     case 'afk': return afkCmd(arg, rest);
     case 'init': return init(arg, rest[0]);
