@@ -28,6 +28,13 @@ check "judges: --model picks one judge" "0 1" "$(models "$(fm judge "$J" p5 --mo
 check "judges: a rescue asks the other family" "0 1" "$(models "$(fm judge "$J" p5 --rescue 2>&1)")"
 check "judges: each judge gets its own prompt file when the prompt is long" 2 "$(FM_ARGV_LIMIT=500 fm judge "$J" p1 >/dev/null 2>&1; ls "$J/.firstmate/notes/" | grep -c '^p1\.judge\..*prompt\.md$')"
 
+claudes() { grep -c '"role":"judge","model":"claude-sonnet-5-5-medium"' "$J/.firstmate/notes/$1.crew.jsonl"; }
+jd p6 "Edit code NO_VERDICT_IF_MODEL:claude"
+check "judges: a judge that ends without a verdict runs once more, with a reminder, and its answer counts" "0 APPROVE 2" "$(fm judge "$J" p6 >/dev/null 2>&1; echo $?) $(vd p6) $(claudes p6)"
+jd p7 "Edit code NEVER_VERDICT_IF_MODEL:claude"
+check "judges: ...only once: still no verdict is HUMAN" "1 HUMAN 2" "$(fm judge "$J" p7 >/dev/null 2>&1; echo $?) $(vd p7) $(claudes p7)"
+check "judge.md: the judge is told it cannot run commands" 1 "$(grep -c 'You cannot run commands' "$ROOT/plugin/agents/judge.md")"
+
 echo "-- the queue and the afk runner"
 A="$T/afk"; mkdir -p "$A"; (cd "$A" && git init -q -b main && echo a > a.txt && git add -A && git -c user.name=t -c user.email=t@t commit -qm i && git checkout -qb work)
 AP=$(cd "$A" && pwd -P); [ -n "$WIN" ] && AP=$(cygpath -m "$AP")

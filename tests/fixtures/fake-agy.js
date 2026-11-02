@@ -48,7 +48,10 @@ const finish = () => {
   if (process.env.FAKE_AGY_LOG) fs.appendFileSync(process.env.FAKE_AGY_LOG, `${Date.now()} ${process.env.FM_ROLE || '-'} ${model}\n`);
   const judge = /VERDICT:/.test(prompt) && process.env.FM_ROLE === 'judge';
   if (process.env.FAKE_AGY_ECHO) { process.stdout.write(JSON.stringify({ conversation_id: 'echo', status: 'SUCCESS', response: prompt, usage: {} })); return; }
-  const response = [`ROLE=${process.env.FM_ROLE || ''} TASK=${process.env.FM_TASK || ''} MODEL=${model} MODE=${val('--mode') || 'default'} CWD=${process.cwd()}`,
+  // NO_VERDICT_IF_MODEL:<s>: that judge ends without a message (as when a refused command ends a headless run),
+  // until its prompt carries the REMINDER; NEVER_VERDICT_IF_MODEL:<s>: it never answers
+  const silent = judge && (onlyFor('NEVER_VERDICT_IF_MODEL') || (onlyFor('NO_VERDICT_IF_MODEL') && !prompt.includes('REMINDER:')));
+  const response = silent ? '' : [`ROLE=${process.env.FM_ROLE || ''} TASK=${process.env.FM_TASK || ''} MODEL=${model} MODE=${val('--mode') || 'default'} CWD=${process.cwd()}`,
     judge ? (prompt.includes('PLEASE_REVISE') ? 'VERDICT: REVISE\nRISK: high\n- fix x' : onlyFor('REVISE_IF_MODEL') ? 'VERDICT: REVISE\n- fix y' : 'VERDICT: APPROVE\n- fine') : 'STATUS: PASS'].join('\n');
   if (process.env.FAKE_AGY_FAIL || onlyFor('FAIL_IF_MODEL')) { process.stdout.write(JSON.stringify({ status: 'ERROR', response: 'model unavailable' })); process.exit(1); }
   process.stdout.write(JSON.stringify({ conversation_id: `fake-${process.pid}`, status: 'SUCCESS', response, duration_seconds: sleep / 1000, num_turns: 1, usage: { input_tokens: 15000, output_tokens: 20, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 15020 } }));

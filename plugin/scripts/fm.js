@@ -825,6 +825,17 @@ async function judgeCmd(repoArg, t, rest) {
   let results;
   try { results = await crew(r, models.map((model) => ({ task: t, role: 'judge', model, brief: `${ask}\n\n${text}` })), { onStart: (ms) => out(startLine(ms)) }); }
   catch (e) { crewFailed(e); }
+  // A judge that ran but gave no VERDICT (a headless run ends on a command it may not run) gets one more run with a
+  // reminder; a second silence counts as a failed judge.
+  const hasVerdict = (res) => /^\s*VERDICT:\s*(APPROVE|REVISE|REJECT|HUMAN)\b/m.test(String((res.json && res.json.response) || ''));
+  const silent = results.filter((res) => res.ok && !hasVerdict(res));
+  if (silent.length) {
+    out(`[fm] judge ${silent.map((x) => x.m.model.id).join(', ')} ended without a verdict; asking once more`);
+    const remind = 'REMINDER: your previous run ended without a verdict, most likely on a command, which you cannot run. Answer now, from the dossier only, in your verdict format.';
+    let again = [];
+    try { again = await crew(r, silent.map((x) => ({ task: t, role: 'judge', model: x.m.model.key, brief: `${ask}\n\n${remind}\n\n${text}` }))); } catch (e) { crewFailed(e); }
+    results = results.map((x) => { const i = silent.indexOf(x); return i >= 0 ? again[i] : x; });
+  }
   const votes = results.map((res) => {
     out(format(res));
     const resp = res.ok ? String(res.json.response || '') : '';
