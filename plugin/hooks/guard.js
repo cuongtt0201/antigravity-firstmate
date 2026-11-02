@@ -315,7 +315,7 @@ function main() {
   // An allow list: a command added to fm.js later stays the first mate's until it is listed here.
   if (/^(worker|checker|explorer)$/.test(agent) && decision.decision === 'allow' && tool === 'run_command') {
     const calls = cmd.match(FM_SCRIPT_RE) || [];
-    const CREW_FM = /^(save|gate|review|status|path|risk|dossier|ladder|shape|report|trust|usage)$/;
+    const CREW_FM = /^(save|gate|review|status|path|risk|dossier|ladder|shape|report|trust|usage|quota)$/;
     if (calls.some((c) => !CREW_FM.test(c.replace(FM_CALL_RE, '').trim().replace(/^["']/, '').split(/\s+/)[0] || ''))) {
       decision = { decision: 'deny', reason: '[guard] The crew may run fm.js save, gate, review, status, path, risk and dossier. Verdicts, delivery, settings, locks and more crew are the first mate\'s; say what you need in your report.' };
     }

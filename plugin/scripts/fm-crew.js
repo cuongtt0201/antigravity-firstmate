@@ -7,11 +7,11 @@
 // go to <notes>/<task>.crew.jsonl and its report to <notes>/<task>.<role>.<n>.md.
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
-const { taskDir, notesDir } = require('./fm-paths.js');
+const { taskDir, notesDir, agyPath } = require('./fm-paths.js');
 const { loadConfig } = require('./fm-config.js');
+const { usable, forget } = require('./fm-quota.js');
 
 const ROLES = {
   reader: { models: ['fast', 'standard'], def: 'fast', inTask: false, cap: 'crewPerDay' },
@@ -21,12 +21,8 @@ const ROLES = {
 const PLUGIN_DIR = path.resolve(__dirname, '..');
 
 class CrewError extends Error {}
-
-function agyPath() {
-  if (process.env.FM_AGY) return process.env.FM_AGY;
-  const local = path.join(os.homedir(), '.gemini', 'bin', process.platform === 'win32' ? 'agy.exe' : 'agy');
-  return fs.existsSync(local) ? local : 'agy';
-}
+// A model group of the account is out of quota: nothing started; it comes back on its own (fm.js exits 4).
+class QuotaError extends CrewError {}
 
 // The role's instructions: the body of agents/<role>.md, with the plugin path filled in.
 function rolePrompt(role) {
@@ -171,8 +167,13 @@ async function crew(r, specs, { onStart } = {}) {
     const want = members.filter((m) => ROLES[m.role].cap === capKey).length;
     if (want && usedToday(r, capKey) + want > (Number(cfg.caps[capKey]) || 0)) throw new CrewError(`the daily cap ${capKey}=${cfg.caps[capKey]} would be passed (${usedToday(r, capKey)} used today): ask the captain; only they can raise it`);
   }
+  for (const m of members) {
+    const u = usable(m.model.id, cfg);
+    if (!u.ok) throw new (u.quota ? QuotaError : CrewError)(`the ${m.role} for task '${m.task}' cannot run on ${m.model.id}: ${u.why}. Nothing was started; fm.js quota shows every group`);
+  }
   if (onStart) onStart(members);
   const results = await Promise.all(members.map((m) => runOne(r, m, cfg)));
+  if (results.some((x) => !x.ok)) forget();
   return results.map((res) => ({ ...res, ...record(r, res) }));
 }
 
@@ -184,4 +185,4 @@ function format(res) {
   return `${head}\n${body}`;
 }
 
-module.exports = { crew, format, startLine, CrewError, ROLES, agyPath, prepare };
+module.exports = { crew, format, startLine, CrewError, QuotaError, ROLES, agyPath, prepare };

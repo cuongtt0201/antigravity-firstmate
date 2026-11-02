@@ -25,6 +25,7 @@ IDE chats load the plugin's guard and skills but have no `invoke_subagent` (surv
 | D4 | App support is kept (nothing in v1 needs App-only features); the IDE is the main target | README |
 | D5 | Guard packs `core` + `devops` on by default | `packs` in config |
 | D6 | Queue / away mode moved into v1.0 (alpha.3): `fm.js queue` and `fm.js afk`, one fresh headless first-mate chat per request; needs merge mode `commit`, a branch that is not protected and a clean tree | `fm-afk.js`, `skills/afk` |
+| D9 | Before a run, fm.js checks the account: models it offers (`agy models`, kept a day) and each quota group (`agy -p /usage`, no tokens, kept 5 min). A judge without quota is skipped (the other judges alone); no judge left → exit 4 and `wait for quota`; the crew does not start without quota (exit 4); afk waits up to `afkMaxWaitHours` and puts back an item cut short with nothing delivered | `fm-quota.js` |
 | D8 | The judge is a panel of two model families (`judges: ["strong","second"]`), run in parallel; the most cautious verdict counts, a failed judge makes it HUMAN; a rescue asks `second` | `fm.js judge`, `judges` in config |
 | D7 | Plugin id stays `flash-ultra` in this MVP: renaming moves the install folder for every existing user, so it waits for the release step | install.js |
 

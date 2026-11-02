@@ -14,6 +14,7 @@ const { notesDir, wtRoot } = require('./fm-paths.js');
 const { withLock } = require('./fm-lock.js');
 const { loadConfig } = require('./fm-config.js');
 const { agyPath } = require('./fm-crew.js');
+const { usable, forget } = require('./fm-quota.js');
 
 class AfkError extends Error {}
 
@@ -84,6 +85,7 @@ function matePrompt(item) {
     '- Do not ask questions. When the request has two readings, take the narrower one and say so in your report.',
     '- Run only fm.js commands: the gate already runs the project\'s checks.',
     '- High risk stays for the captain: when fm.js deliver stops with exit 3, leave that task and say so.',
+    '- No quota stops you too: when an fm.js command exits 4, do not retry; leave the task and say what waits.',
     '- End with a short report: what was delivered (task and commit), what waits for the captain and why.',
     '',
     'REQUEST:',
@@ -94,8 +96,7 @@ function matePrompt(item) {
 // The run's own permissions, for this chat only: fm.js, the brief folder and the task workspaces.
 function mateArgs(r, cfg, prompt) {
   const settings = { permissions: { allow: [`command(node ${slash(path.join(__dirname, 'fm.js'))})`, `write_file(${slash(r)}/.firstmate/briefs)`, `read_file(${slash(wtRoot())})`] } };
-  const model = (cfg.models && (cfg.models.mate || cfg.models.standard)) || 'gemini-3.8-flash-medium';
-  return ['-p', prompt, '--agent', 'firstmate', '--model', model, '--output-format', 'json', '--print-timeout', `${Number(cfg.afkItemTimeoutSec) || 3600}s`, '--settings', JSON.stringify(settings)];
+  return ['-p', prompt, '--agent', 'firstmate', '--model', mateModel(cfg), '--output-format', 'json', '--print-timeout', `${Number(cfg.afkItemTimeoutSec) || 3600}s`, '--settings', JSON.stringify(settings)];
 }
 
 function runMate(r, args, timeoutSec) {
@@ -120,6 +121,35 @@ function runMate(r, args, timeoutSec) {
   });
 }
 
+const mateModel = (cfg) => (cfg.models && (cfg.models.mate || cfg.models.standard)) || 'gemini-3.8-flash-medium';
+const sleepMs = (ms) => new Promise((res) => setTimeout(res, ms));
+
+// Waits while the first mate's quota group is empty and comes back within afkMaxWaitHours. Resolves to '' when the
+// first mate may run, or to why the runner must stop.
+async function waitForQuota(r, cfg, log) {
+  const poll = Number(process.env.FM_AFK_POLL_MS) || 60000;
+  const pad = process.env.FM_AFK_PAD_MS !== undefined ? Number(process.env.FM_AFK_PAD_MS) : 30000;
+  const maxWait = (Number(cfg.afkMaxWaitHours) || 6) * 3600 * 1000;
+  for (;;) {
+    const u = usable(mateModel(cfg), cfg);
+    if (u.ok) return '';
+    if (!u.quota) return `the first mate's model ${mateModel(cfg)} is ${u.why}`;
+    const until = Date.parse(u.until) || 0;
+    if (!until || until - Date.now() > maxWait) return `${u.why}, later than afkMaxWaitHours (${Number(cfg.afkMaxWaitHours) || 6} h)`;
+    log(`[fm] afk: waiting for quota: ${u.why}`);
+    while (Date.now() < until + pad) {
+      if (fs.existsSync(stopFile(r))) return 'stopped with fm.js afk --stop';
+      await sleepMs(Math.min(poll, until + pad - Date.now() + 1));
+    }
+    forget();
+  }
+}
+
+// Whether anything was delivered since an item started (ledger rows), so a cut-short item is not run twice.
+function deliveredSince(r, iso) {
+  try { return fs.readFileSync(path.join(notesDir(r), 'ledger.tsv'), 'utf8').split('\n').slice(1).some((l) => l.split('\t')[0] >= iso); } catch { return false; }
+}
+
 // Runs waiting items until the queue is empty, --max is reached, --stop is asked or an item leaves a mess.
 // Resolves to the exit code: 0, or 1 when an item failed or the runner had to halt.
 async function afk(r, { max = 0, log }) {
@@ -141,6 +171,9 @@ async function afk(r, { max = 0, log }) {
     for (;;) {
       if (fs.existsSync(stopFile(r))) { why = 'stopped with fm.js afk --stop'; break; }
       if (max && ran >= max) { why = `ran ${max} item(s) (--max)`; break; }
+      if (!readQueue(r).some((x) => x.state === 'waiting')) break;
+      const blocked = await waitForQuota(r, cfg, log);
+      if (blocked) { why = blocked; failed += 1; break; }
       const item = editQueue(r, (q) => { const it = q.find((x) => x.state === 'waiting'); if (it) Object.assign(it, { state: 'running', started: now() }); return it ? { ...it } : null; });
       if (!item) break;
       log(`[fm] afk: item #${item.id} started: ${item.request}`);
@@ -148,6 +181,16 @@ async function afk(r, { max = 0, log }) {
       ran += 1;
       const said = res.ok ? String(res.json.response || '').trim() || '(the first mate ended without a report)' : `FAILED: ${res.error}`;
       const u = (res.json && res.json.usage) || {};
+      // Cut short because the first mate's quota ran out, with nothing delivered yet: back in the queue, to run once
+      // the quota is back (the next turn of the loop waits for it).
+      if (!res.ok) forget();
+      if (!res.ok && usable(mateModel(cfg), cfg).quota && !deliveredSince(r, item.started)) {
+        editQueue(r, (q) => { const it = q.find((x) => x.id === item.id); if (it) Object.assign(it, { state: 'waiting', summary: `put back: the quota ran out during the run (${said.slice(0, 200)})` }); });
+        log(`[fm] afk: item #${item.id} put back in the queue: the quota ran out during it and nothing was delivered`);
+        ran -= 1;
+        if (git(r, ['status', '--porcelain'])) { why = `item #${item.id} left uncommitted changes in the working tree; stopped so the next item does not start on top of them`; failed += 1; break; }
+        continue;
+      }
       editQueue(r, (q) => { const it = q.find((x) => x.id === item.id); if (it) Object.assign(it, { state: res.ok ? 'done' : 'failed', finished: now(), seconds: Math.round(res.ms / 1000), conversation_id: res.json && res.json.conversation_id, summary: said.slice(0, 4000) }); });
       fs.appendFileSync(path.join(notesDir(r), 'afk.jsonl'), `${JSON.stringify({ time: now(), id: item.id, ok: res.ok, conversation_id: res.json && res.json.conversation_id, seconds: Math.round(res.ms / 1000), usage: u })}\n`);
       log(`[fm] afk: item #${item.id} ${res.ok ? 'done' : 'FAILED'} in ${Math.round(res.ms / 1000)}s: ${said.split('\n').filter(Boolean).pop().slice(0, 200)}`);

@@ -20,7 +20,7 @@
 npx -y github:cuongtt0201/antigravity-firstmate
 ```
 
-> **v1.0.0-alpha.3.** This is the first version built for the Antigravity IDE. See [What changed in v1](#what-changed-in-v1).
+> **v1.0.0-alpha.4.** This is the first version built for the Antigravity IDE. See [What changed in v1](#what-changed-in-v1).
 
 ---
 
@@ -104,6 +104,19 @@ node ~/.gemini/config/plugins/flash-ultra/scripts/fm.js afk . --detach
 - When you are back: `fm.js queue .` (each item: done, failed, waiting, with its last line) and `fm.js report .` (commits, what waits for you, tokens). `fm.js undo . <task>` takes a commit back. `fm.js afk . --stop` stops after the current item.
 - The runner gives each chat its own session permissions (fm.js, the brief folder, the task workspaces); `--grant` is not needed for it.
 
+## Quota
+
+Antigravity gives each account separate quota groups: Gemini (Flash, Pro), Gemini 4 Argon, and Claude and GPT, each with a five-hour and a weekly limit. Before anything runs, fm.js asks `agy` which models the account offers and what each group has left (`agy -p /usage`, no tokens), and acts on it:
+
+| Group empty | What happens |
+|---|---|
+| Argon | Claude judges alone; the verdict says which judge was skipped and until when |
+| Claude and GPT | Argon judges alone |
+| Both judge groups | nothing runs (exit 4); the ladder says `wait for quota`, the task waits |
+| Gemini | the crew does not start (exit 4); `/afk` waits for the group to come back (up to `afkMaxWaitHours`, 6) and goes on; an item cut short with nothing delivered goes back to the queue |
+
+A model the account does not offer is skipped the same way. `fm.js quota` shows every group, what is left, when an empty one comes back and which roles it serves. A group with 2% or less left counts as empty (`quotaReserve`).
+
 ## Safe by default
 
 The guard hook runs on every tool call of the first mate and the crew, in the IDE, the App and the CLI:
@@ -175,7 +188,7 @@ Tasks started under v0.12 inside the repo still work. `fm.js clean <repo> --lega
 - Without `--grant`, the headless CLI refuses the first mate's first `fm.js` command (see Install, step 4).
 - In the IDE, the plugin's `SessionStart` and `PreInvocation` hooks are not confirmed yet. The guard runs. `tools/probe/` and [docs/ide-capabilities.md](docs/ide-capabilities.md) describe how to check the rest.
 - Headless crew runs end when the CLI refuses a command, so builders edit with file tools only and fm.js runs the checks after them.
-- The crew is all Gemini; only the second judge is of another family. Claude runs through `agy` on your Antigravity account: if it is not available there, every medium-risk task comes back as HUMAN until you set `fm.js config <repo> judges '["strong"]'`.
+- The crew is all Gemini; only the second judge is of another family. Both judges are models of your own Antigravity account (Gemini 4 Argon and Claude Sonnet, as in its model list), run through `agy`; nothing else is needed.
 - `fm.js review` finds uses of changed names with `git grep`; calls through variables or reflection are not listed.
 - Prompt rules guide the models; only the hooks and scripts enforce.
 

@@ -19,6 +19,8 @@ const DEFAULTS = {
   judges: ['strong', 'second'], // the panel fm.js judge runs in parallel; the most cautious verdict counts
   caps: { perCall: 6, crewPerDay: 40, judgePerDay: 30 },
   afkItemTimeoutSec: 3600, // one queued request in fm.js afk
+  afkMaxWaitHours: 6, // fm.js afk waits this long for the first mate's quota to come back, then stops
+  quotaReserve: 0.02, // a model group with this share or less left counts as empty (fm.js quota)
   autoMergeMaxRisk: 'medium', // highest risk merged without the captain: low | medium
   handoffAtTokens: 150000,
 };

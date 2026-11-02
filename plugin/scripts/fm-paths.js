@@ -9,6 +9,12 @@ const path = require('path');
 
 const fmHome = () => process.env.FM_HOME || path.join(os.homedir(), '.firstmate');
 const wtRoot = () => process.env.FM_WT_ROOT || path.join(fmHome(), 'wt');
+// The Antigravity CLI that runs the crew: FM_AGY, else ~/.gemini/bin/agy, else agy on PATH.
+function agyPath() {
+  if (process.env.FM_AGY) return process.env.FM_AGY;
+  const local = path.join(os.homedir(), '.gemini', 'bin', process.platform === 'win32' ? 'agy.exe' : 'agy');
+  return fs.existsSync(local) ? local : 'agy';
+}
 
 function realpath(p) { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } }
 
@@ -69,4 +75,4 @@ function isTaskWorkspaceDir(dir) {
   return isWithin(dir, wtRoot()) || /[\\/]\.firstmate[\\/]wt[\\/]/.test(realish(dir));
 }
 
-module.exports = { fmHome, wtRoot, repoKey, taskDir, legacyTaskDir, notesDir, repoOfWorkspace, isTaskWorkspaceDir, isWithin, realish };
+module.exports = { fmHome, wtRoot, agyPath, repoKey, taskDir, legacyTaskDir, notesDir, repoOfWorkspace, isTaskWorkspaceDir, isWithin, realish };

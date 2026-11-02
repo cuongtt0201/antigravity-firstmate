@@ -34,6 +34,9 @@
 //   fm.js usage   <conversation-id> [--brain <dir>]...  tokens per chat and subagent, and the strong model's share
 //   fm.js queue   <repo> [add "<request>"… | drop <id>]  the captain's requests for while they are away
 //   fm.js afk     <repo> [--max N] [--detach] | --stop   one headless first-mate chat per queued request (see fm-afk.js)
+//   fm.js quota   [<repo>]                   the account's quota groups, what is left and which roles they serve
+// Exit codes: 0 done, 1 failed (gate FAIL, a verdict other than APPROVE, a failed run), 2 refused or an error,
+// 3 proposed (waits for the captain), 4 waiting for quota (a model group is empty; it comes back on its own).
 // Tasks live in refs/firstmate/<task>/{base,head}, never in refs/heads, so `git branch` and pushes never see them.
 // Node only (no bash, no ruby), so the same script runs on macOS, Linux and Windows.
 
@@ -543,7 +546,7 @@ function status(repoArg) {
 }
 
 // A task's working record; the patch (for undo), crew reports and token logs stay as history.
-const taskRecordFiles = (t) => ['gate', 'gate.log', 'slot', 'attempts', 'verdict', 'riskfloor', 'risk', 'locked', 'request', 'done', 'scenarios', 'arena', 'rescued', 'crew.pid'].map((x) => `${t}.${x}`);
+const taskRecordFiles = (t) => ['gate', 'gate.log', 'slot', 'attempts', 'verdict', 'riskfloor', 'risk', 'locked', 'request', 'done', 'scenarios', 'arena', 'rescued', 'crew.pid', 'quota'].map((x) => `${t}.${x}`);
 function removeTask(r, t) {
   const w = taskDir(r, t);
   if (fs.existsSync(w)) { if (!git(r, ['worktree', 'remove', '--force', w]).ok) fs.rmSync(w, { recursive: true, force: true }); }
@@ -794,17 +797,32 @@ async function judgeCmd(repoArg, t, rest) {
   const cfg = loadConfig(r);
   const mi = rest.indexOf('--model');
   const text = dossier(r, t);
-  const { crew, format, startLine, CrewError } = require('./fm-crew.js');
+  const { crew, format, startLine } = require('./fm-crew.js');
   const rescue = rest.includes('--rescue');
   const panel = Array.isArray(cfg.judges) && cfg.judges.length ? cfg.judges.map(String) : ['strong'];
-  const models = mi >= 0 ? [rest[mi + 1]] : rescue ? [panel.includes('second') ? 'second' : panel[0]] : [...new Set(panel)];
+  const candidates = mi >= 0 ? [rest[mi + 1]] : rescue ? [...new Set([...(panel.includes('second') ? ['second'] : []), ...panel])] : [...new Set(panel)];
+  // A judge whose model the account does not offer, or whose quota group is empty, is skipped; the others judge.
+  const { usable } = require('./fm-quota.js');
+  const idOf = (k) => (cfg.models && cfg.models[k]) || k;
+  const skipped = []; const able = [];
+  for (const k of candidates) { const u = usable(idOf(k), cfg); if (u.ok) able.push(k); else skipped.push({ id: idOf(k), why: u.why, until: u.quota ? u.until : '' }); }
+  const models = rescue ? able.slice(0, 1) : able;
+  for (const s of skipped) out(`[fm] skipped ${s.id}: ${s.why}`);
+  const quotaNote = path.join(notesDir(r), `${t}.quota`);
+  if (!models.length) {
+    const until = skipped.map((s) => s.until).filter(Boolean).sort()[0] || '';
+    if (until) fs.writeFileSync(quotaNote, `${until}\n`);
+    out(`[fm] no judge can run now${until ? `; the first one is back at ${until}` : ''}: task ${t} waits (fm.js quota)`);
+    throw new Exit(until ? 4 : 2);
+  }
+  fs.rmSync(quotaNote, { force: true });
   if (rescue) fs.writeFileSync(path.join(notesDir(r), `${t}.rescued`), `${new Date().toISOString()}\n`);
   const ask = rescue
     ? 'RESCUE: the gate keeps failing for this task, also after several approaches. Diagnose the cause from the GATE lines and the diff, answer VERDICT: REVISE (or HUMAN when the task cannot be done as asked) and give a new approach as numbered FIXES.'
     : 'Judge this task and answer in your verdict format.';
   let results;
   try { results = await crew(r, models.map((model) => ({ task: t, role: 'judge', model, brief: `${ask}\n\n${text}` })), { onStart: (ms) => out(startLine(ms)) }); }
-  catch (e) { if (e instanceof CrewError) die(e.message); throw e; }
+  catch (e) { crewFailed(e); }
   const votes = results.map((res) => {
     out(format(res));
     const resp = res.ok ? String(res.json.response || '') : '';
@@ -816,12 +834,18 @@ async function judgeCmd(repoArg, t, rest) {
   const v = votes.reduce((a, x) => (VERDICTS.indexOf(x.v) > VERDICTS.indexOf(a) ? x.v : a), 'APPROVE');
   const { maxRisk } = require('./fm-risk.js');
   const raise = votes.map((x) => x.raise).filter(Boolean).reduce((a, x) => maxRisk(a, x), '');
-  writeVerdict(r, t, v, `judges: ${votes.map((x) => `${x.model} ${x.failed || x.v} (report ${x.file})`).join('; ')}`, raise, 'judge');
+  writeVerdict(r, t, v, `judges: ${votes.map((x) => `${x.model} ${x.failed || x.v} (report ${x.file})`).join('; ')}${skipped.length ? `; skipped ${skipped.map((s) => `${s.id} (${s.why})`).join(', ')}` : ''}`, raise, 'judge');
   const failed = votes.filter((x) => x.failed);
   if (failed.length) out(`[fm] judge ${failed.map((x) => x.model).join(', ')} ${failed.map((x) => x.failed).join(', ')}, so the verdict is HUMAN: the captain decides (fm.js deliver ${r} ${t} --approve), or sets the judges with fm.js config ${r} judges '["strong"]'`);
   else if (new Set(votes.map((x) => x.v)).size > 1) out(`[fm] the judges disagree (${votes.map((x) => `${x.model} ${x.v}`).join(', ')}); the most cautious verdict counts`);
   out(`[fm] verdict for task ${t}: ${v}${raise ? ` (risk raised to at least ${raise})` : ''}`);
   if (v !== 'APPROVE') throw new Exit(1);
+}
+
+// When the last fm.js judge found no judge with quota: the time the first one is back, while that is still ahead.
+function judgeQuotaUntil(r, t) {
+  const until = readNote(r, `${t}.quota`);
+  return until && Date.parse(until) > Date.now() ? until : '';
 }
 
 // ---------- ladder: the next step for a task, decided by code from its record ----------
@@ -842,6 +866,7 @@ function ladder(r, t) {
     if (vd.sha === head && vd.v === 'APPROVE') return say('ask captain', 'a hand-written APPROVE: medium risk merges on the judge\'s APPROVE (fm.js judge) or the captain\'s --approve');
     if (vd.sha === head && vd.v === 'REVISE') return say('fix', "the judge asked for changes: send its FIXES to the builder");
     if (vd.sha === head && vd.v) return say('ask captain', `the judge said ${vd.v}`);
+    if (judgeQuotaUntil(r, t)) return say('wait for quota', `no judge has quota until ${judgeQuotaUntil(r, t)}: leave this task; run fm.js judge again after that (fm.js quota)`);
     return say('judge', 'gate PASS, medium risk: fm.js judge');
   }
   let fails = 0; for (let i = tries.length - 1; i >= 0 && tries[i][1] === 'FAIL'; i--) fails += 1;
@@ -849,6 +874,7 @@ function ladder(r, t) {
   const rescued = fs.existsSync(path.join(notesDir(r), `${t}.rescued`));
   if (fails <= 2) return say('fix', `gate FAIL ${fails} time(s): send the failing lines to the same builder`);
   if (!arenaRan) return say('arena 3', `gate FAIL ${fails} times: try three approaches (fm.js arena ${r} ${t} --n 3)`);
+  if (!rescued && judgeQuotaUntil(r, t)) return say('wait for quota', `the rescue needs a judge, and none has quota until ${judgeQuotaUntil(r, t)} (fm.js quota)`);
   if (!rescued) return say('judge rescue', 'the arena did not pass either: ask the judge to diagnose and rewrite the brief');
   return say('ask captain', 'the judge rescue did not pass either: report to the captain with the diagnosis');
 }
@@ -949,7 +975,7 @@ function report(repoArg, args) {
     else if (gsha === head && gv === 'PASS') {
       const risk = taskRisk(r, t).level; const vd = verdictOf(r, t);
       if (risk === 'high') state = 'waiting for the captain (high risk)';
-      else if (risk === 'medium' && !(vd.v === 'APPROVE' && vd.sha === head)) state = vd.v && vd.sha === head ? `judge said ${vd.v}` : 'waiting for the judge';
+      else if (risk === 'medium' && !(vd.v === 'APPROVE' && vd.sha === head)) state = vd.v && vd.sha === head ? `judge said ${vd.v}` : judgeQuotaUntil(r, t) ? `waiting for judge quota until ${judgeQuotaUntil(r, t)}` : 'waiting for the judge';
       else state = 'ready to deliver';
     }
     out(`  ${t} | ${state} | ${gitOut(r, ['diff', '--shortstat', `refs/firstmate/${t}/base`, `refs/firstmate/${t}/head`]).trim() || 'no change'}`);
@@ -1000,9 +1026,23 @@ async function afkCmd(repoArg, rest) {
 }
 
 // ---------- crew: headless agy processes, one per task ----------
+// A refusal before anything started: exit 4 when a quota group is empty (it comes back on its own), else 2.
+function crewFailed(e) {
+  const { CrewError, QuotaError } = require('./fm-crew.js');
+  if (e instanceof QuotaError) { process.stderr.write(`[fm] WAIT: ${e.message}\n`); throw new Exit(4); }
+  if (e instanceof CrewError) die(e.message);
+  throw e;
+}
+
+function quotaCmd(repoArg) {
+  const q = require('./fm-quota.js');
+  q.forget();
+  out(q.describe(loadConfig(repoArg ? needRepo(repoArg) : undefined)).join('\n'));
+}
+
 async function crewCmd(repoArg, rest) {
   const r = needRepo(repoArg);
-  const { crew, format, startLine, CrewError } = require('./fm-crew.js');
+  const { crew, format, startLine } = require('./fm-crew.js');
   let specs;
   const bi = rest.indexOf('--batch');
   if (bi >= 0) {
@@ -1019,7 +1059,7 @@ async function crewCmd(repoArg, rest) {
     specs = [spec];
   }
   let results;
-  try { results = await crew(r, specs, { onStart: (ms) => out(startLine(ms)) }); } catch (e) { if (e instanceof CrewError) die(e.message); throw e; }
+  try { results = await crew(r, specs, { onStart: (ms) => out(startLine(ms)) }); } catch (e) { crewFailed(e); }
   let failed = results.some((x) => !x.ok);
   for (const res of results) {
     out(format(res));
@@ -1034,6 +1074,7 @@ async function crewCmd(repoArg, rest) {
 }
 
 function main(argv) {
+  if (argv[0] === 'quota') return quotaCmd(argv[1]);
   if (argv.length < 2) die('usage: fm.js <init|fact|start|save|gate|review|deliver|status|clean> <repo> [args] | fm.js shape <brief.md> [--sections] [file] | fm.js usage <conversation-id>');
   const [cmd, arg, ...rest] = argv;
   switch (cmd) {

@@ -9,7 +9,31 @@ let prompt = val('-p') || val('--print');
 const pf = (prompt.match(/(\S+\.prompt\.md)/) || [])[1];
 if (pf && fs.existsSync(pf)) prompt = fs.readFileSync(pf, 'utf8');
 const model = val('--model');
+// `agy models`: FAKE_AGY_MODELS (comma-separated) or every model the real CLI listed
+if (a[0] === 'models') {
+  const ids = (process.env.FAKE_AGY_MODELS || 'gemini-4-argon-medium,gemini-4-argon-high,gemini-4-argon-low,gemini-3.8-flash-high,gemini-3.8-flash-medium,gemini-3.8-flash-low,claude-opus-5-5-low,claude-opus-5-5-medium,claude-opus-5-5-high,claude-sonnet-5-5-low,claude-sonnet-5-5-medium,claude-sonnet-5-5-high,gpt-oss-120b-medium').split(',');
+  process.stdout.write(`Fetching available models...\n${ids.map((x) => `${x}\t${x}`).join('\n')}\n`);
+  process.exit(0);
+}
+// `agy -p /usage`: the groups in FAKE_AGY_USAGE_FILE ({"<group>": {"remaining": 0.5, "reset": "<iso>"}}), others full;
+// a reset time in the past means the group is full again. "not json" in the file: agy cannot tell.
+const usageFile = process.env.FAKE_AGY_USAGE_FILE;
+const readUsage = () => { try { return fs.readFileSync(usageFile, 'utf8'); } catch { return '{}'; } };
+if (prompt === '/usage') {
+  const raw = readUsage();
+  if (raw.trim() === 'not json') { process.stdout.write('usage is not available\n'); process.exit(0); }
+  const set = JSON.parse(raw || '{}');
+  const groups = ['Gemini Models', 'Claude and GPT models', 'Gemini 4 Argon'].map((name) => {
+    const s = set[name] || {}; const reset = s.reset || '2099-01-01T00:00:00Z';
+    const left = Date.parse(reset) <= Date.now() || s.remaining === undefined ? 1 : s.remaining;
+    return { name, buckets: [{ id: name, window: 'weekly', remaining_fraction: left, reset_time: reset }] };
+  });
+  process.stdout.write(JSON.stringify({ conversation_id: '', status: 'SUCCESS', response: '', command: { name: 'usage', data: { groups } } }));
+  process.exit(0);
+}
 if (process.env.FAKE_AGY_ARGS) fs.appendFileSync(process.env.FAKE_AGY_ARGS, `${JSON.stringify(a)}\n`);
+// EXHAUST_GEMINI in a prompt: this run uses up the Gemini group (in FAKE_AGY_USAGE_FILE) until 2099
+if (usageFile && prompt.includes('EXHAUST_GEMINI')) fs.writeFileSync(usageFile, JSON.stringify({ ...JSON.parse(readUsage() || '{}'), 'Gemini Models': { remaining: 0, reset: '2099-01-01T00:00:00Z' } }));
 // FAIL_IF_MODEL:<s> / REVISE_IF_MODEL:<s>: only a model whose id contains <s> fails, or answers REVISE as a judge
 const onlyFor = (k) => { const s = (prompt.match(new RegExp(`${k}:(\\S+)`)) || [])[1]; return !!s && model.includes(s); };
 const sleep = Number((prompt.match(/SLEEP:(\d+)/) || [])[1] || 0);
